@@ -1,0 +1,24 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# agent state / sessions (never commit a run ledger by accident)
+*.jsonl
+!tests/**/*.jsonl
+
+# secrets / env
+.env
+.env.*
+*.key
+*.token
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.swp
