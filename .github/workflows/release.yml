@@ -1,0 +1,77 @@
+name: release
+
+# Publish to PyPI via OIDC trusted publishing (no token stored anywhere).
+#
+# PLACEHOLDER DISTRIBUTION NAME, publish is disabled on purpose.
+# The PyPI name for this project is UNDECIDED: "relay-agent" (the current
+# pyproject name) is already taken on PyPI by an unrelated project, so this
+# repo can never publish under that name. Before enabling the publish job the
+# operator must:
+#   1. choose the final distribution name and update pyproject.toml
+#      [project] name, the README install line, and this comment;
+#   2. add a PyPI trusted publisher for that name
+#      (owner "HarperZ9", repo "relay", workflow "release.yml");
+#   3. set the repo variable PYPI_ENABLED to 'true'.
+# PYPI_ENABLED defaults to unset, which means false: a tag or release builds
+# and smokes the wheel but never publishes.
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: verify the tag matches pyproject version
+        run: |
+          python -m pip install build
+          python -m build
+          PKG_VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          if [ -n "$TAG_VER" ] && [ "$TAG_VER" != "$PKG_VER" ]; then
+            echo "tag $TAG_VER != pyproject $PKG_VER"; exit 1
+          fi
+      - name: install the wheel and smoke the CLI (no broken release)
+        run: |
+          python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl
+          /tmp/v/bin/relay --help > /dev/null
+          /tmp/v/bin/python -c "import relay; print(relay.__version__)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    # Gated: stays skipped until the repo variable PYPI_ENABLED is 'true'
+    # (unset counts as false). See the placeholder note at the top of this
+    # file: the distribution name must be decided first.
+    if: ${{ vars.PYPI_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # OIDC: no token, no secret
+    steps:
+      - uses: actions/checkout@v4
+      - name: guard against publishing under the placeholder name
+        run: |
+          # "relay-agent" belongs to an unrelated project on PyPI. This guard
+          # fails until the operator renames the distribution in pyproject.toml.
+          NAME=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['name'])")
+          if [ "$NAME" = "relay-agent" ]; then
+            echo "PLACEHOLDER distribution name 'relay-agent' is taken on PyPI by an unrelated project."
+            echo "Choose the final name and update pyproject.toml before enabling publish."
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
