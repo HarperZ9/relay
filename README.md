@@ -2,7 +2,7 @@
 
 **A zero-dependency, accountable coding agent that runs on any model endpoint.**
 Local models when you're offline, your subscription or API when you need more,
-automatic failover across all of them — and every run is a re-verifiable,
+automatic failover across all of them, and every run is a re-verifiable,
 git-anchored trajectory. Stdlib only.
 
 ```
@@ -16,7 +16,7 @@ relay --mcp                                # serve the agent to any MCP client
 
 ## Reaches every endpoint (with your own credentials)
 
-One ladder, tried in order, failing over on exhaustion or error — free/private
+One ladder, tried in order, failing over on exhaustion or error, free/private
 tiers first so you only spend metered tokens when you have to:
 
 | Tier | Reached by |
@@ -36,12 +36,12 @@ A missing credential just drops that tier from the ladder.
 
 `--agent` runs a gated tool loop the model drives:
 
-- **`repo_map`** — a compact code outline (Python via `ast`; JS/TS/Go/Rust/Java/
+- **`repo_map`**: a compact code outline (Python via `ast`; JS/TS/Go/Rust/Java/
   C#/Swift/PHP/Ruby via patterns) so the model finds the right file.
-- **`edit_file`** — precise search/replace where the target must match exactly
+- **`edit_file`**: precise search/replace where the target must match exactly
   once, so an ambiguous edit is refused, not guessed.
-- **`read_file` / `list_dir`** — sandboxed to `--root`.
-- **`write_file` / `run`** — off by default; enabled with `--allow-write` /
+- **`read_file` / `list_dir`**: sandboxed to `--root`.
+- **`write_file` / `run`**: off by default; enabled with `--allow-write` /
   `--allow-exec`, and a denylist blocks destructive commands even then.
 
 ## The wedge: a provable run
@@ -57,7 +57,7 @@ receipt. No other coding agent gives you a run you can *prove*, not just read.
 
 `relay --mcp` is a zero-dep stdio MCP server exposing `local_agent_health`,
 `local_agent_chat`, and `local_agent_run`. Point Claude Code (or any MCP client)
-at it to use relay as a fallback tier — e.g. keep working on local models when a
+at it to use relay as a fallback tier, e.g. keep working on local models when a
 hosted quota runs out.
 
 ## Library
