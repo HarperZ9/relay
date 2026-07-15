@@ -52,6 +52,14 @@ def _guard(transport, method, url, headers, body, timeout, name):
         raise BackendError(f"{name} unreachable: {e}") from e
 
 
+def _require_ok(status, obj, name):
+    """Success is decided by the HTTP status, never by whether an error body happens to carry the
+    success shape. A non-2xx raises so the ladder fails over instead of returning an error as text."""
+    if not (200 <= status < 300):
+        detail = obj.get("error", obj) if isinstance(obj, dict) else obj
+        raise BackendError(f"{name} returned {status}: {detail}")
+
+
 @dataclass
 class OpenAICompatBackend:
     """OpenAI-compatible /chat/completions: OpenAI (codex api), DeepSeek, a
@@ -75,10 +83,13 @@ class OpenAICompatBackend:
                            "temperature": temperature, "max_tokens": max_tokens}).encode()
         status, obj = _guard(self.transport, "POST", f"{self.base_url}/chat/completions",
                              headers, body, self.timeout, self.name)
+        _require_ok(status, obj, self.name)
         try:
             text = obj["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
             raise BackendError(f"{self.name} returned {status}: {obj.get('error', obj)}")
+        if not isinstance(text, str):
+            raise BackendError(f"{self.name} returned {status} with null/non-text content")
         return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": seed}
 
 
@@ -224,7 +235,11 @@ def _one(pname: str, spec: dict, mode: str):
         base = os.environ.get(f"{up}_PROVIDER_BASE_URL")
         if not base:
             return None
-        key = f"{up}_PROVIDER_KEY" if _k(f"{up}_PROVIDER_KEY") else spec["key"]
+        # A gateway points at an arbitrary URL, so it may use ONLY its dedicated
+        # <PROVIDER>_PROVIDER_KEY. Never fall back to the provider's OFFICIAL API key: that would
+        # replay the operator's real credential to a third-party endpoint. Absent a provider key,
+        # the gateway is called unauthenticated (key_env="") -- the official secret never leaves.
+        key = f"{up}_PROVIDER_KEY" if _k(f"{up}_PROVIDER_KEY") else ""
         model = os.environ.get(f"{up}_MODEL", spec["model"])
         return OpenAICompatBackend(name=f"{pname}-provider", base_url=base, model=model, key_env=key)
     if mode == "cloud":
