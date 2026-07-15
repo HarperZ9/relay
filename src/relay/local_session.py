@@ -26,7 +26,7 @@ def _h(*parts: str) -> str:
 @dataclass
 class Entry:
     seq: int
-    kind: str            # user | assistant | tool_call | tool_result
+    kind: str            # user | assistant | tool_call | tool_result | error
     content: str
     meta: dict
     prev_hash: str
@@ -74,13 +74,19 @@ class SessionLedger:
             f.write(self.to_jsonl())
 
     @classmethod
-    def load(cls, path: str) -> "SessionLedger":
+    def load(cls, path: str, *, verify: bool = True) -> "SessionLedger":
+        """Load a saved ledger. By default the chain is re-derived on the read
+        path and a tampered/corrupt file is REFUSED (raises ValueError), so the
+        tamper-evidence guarantee is enforced where it matters, not merely offered.
+        Pass verify=False to inspect a broken chain deliberately."""
         led = cls()
         with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
                     led.entries.append(Entry(**json.loads(line)))
+        if verify and led.entries and not led.verify():
+            raise ValueError(f"ledger chain failed to verify (tampered or corrupt): {path}")
         return led
 
     def transcript(self) -> list[dict]:

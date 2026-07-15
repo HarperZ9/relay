@@ -6,11 +6,15 @@ and default-deny for write/exec, with a denylist even when exec is allowed;
 through save/load; (3) the agentic loop executes gated tools, feeds observations
 back, records the whole trajectory, and returns a re-verifiable checkpoint.
 """
+import json
+
 import pytest
 
-from relay.local_loop import run_agent
+from relay.local_agent import BackendError
+from relay.local_loop import run_agent, verify_receipts, witnessed_edit_paths
 from relay.local_session import SessionLedger
 from relay.local_tools import ToolExecutor, ToolGate, parse_tool_calls
+from relay.messages_api import make_receipt, recompute_receipt_id
 
 
 # ── tools + gate + sandbox ────────────────────────────────────────────────
@@ -41,6 +45,18 @@ def test_exec_gate_and_denylist():
     assert on.execute("run", {"cmd": "echo hi"}).ok             # allowed via injected runner
     blocked = on.execute("run", {"cmd": "rm -rf /"})
     assert not blocked.ok and "denylist" in blocked.output      # destructive blocked even when allowed
+
+
+def test_exec_implies_write_capability(tmp_path):
+    # A shell can write, so --allow-exec cannot honestly keep files immutable. The
+    # gate no longer presents writes as 'off' while exec is on: enabling exec
+    # enables write, consistently — write_file is allowed, not falsely gated-off,
+    # exactly the capability the run tool already grants.
+    assert ToolGate(allow_exec=True).allow_write is True
+    assert ToolGate(allow_exec=False).allow_write is False       # exec off -> unchanged
+    ex = ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_exec=True))
+    w = ex.execute("write_file", {"path": "a.txt", "content": "x"})
+    assert w.ok and (tmp_path / "a.txt").read_text() == "x"
 
 
 def test_write_gate_default_deny_then_allowed(tmp_path):
@@ -117,7 +133,9 @@ def test_ledger_save_load_roundtrip(tmp_path):
 # ── the agentic loop ──────────────────────────────────────────────────────
 
 class ScriptedAgent:
-    """A fake LocalAgent: returns queued replies, records what it was sent."""
+    """A fake LocalAgent: returns queued replies, records what it was sent. Emits a
+    real per-turn receipt (full fields) so the loop's receipt re-derivation is
+    exercised, not stubbed away."""
 
     def __init__(self, replies, backend="stub"):
         self.system = "base system"
@@ -127,8 +145,34 @@ class ScriptedAgent:
     def send(self, message):
         self.sent.append(message)
         text = self._replies.pop(0) if self._replies else "done"
+        receipt = make_receipt(
+            {"prompt": message, "system": self.system, "max_new_tokens": 512,
+             "temperature": 0.0, "seed": 0, "requested_model": "stub"},
+            {"text": text, "seed": 0}, "stub")
         return {"content": [{"type": "text", "text": text}], "backend": "stub",
-                "x_receipt": {"receipt_id": f"rid{len(self.sent)}"}}
+                "x_receipt": receipt}
+
+
+class FailingAgent:
+    """Succeeds for the scripted replies, then every backend fails (BackendError),
+    to exercise a mid-loop endpoint death."""
+
+    def __init__(self, replies):
+        self.system = "base system"
+        self._replies = list(replies)
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+        if not self._replies:
+            raise BackendError("all healthy backends failed: serve; ollama")
+        text = self._replies.pop(0)
+        receipt = make_receipt(
+            {"prompt": message, "system": self.system, "max_new_tokens": 512,
+             "temperature": 0.0, "seed": 0, "requested_model": "stub"},
+            {"text": text, "seed": 0}, "stub")
+        return {"content": [{"type": "text", "text": text}], "backend": "stub",
+                "x_receipt": receipt}
 
 
 def test_loop_executes_tools_and_witnesses_the_full_trajectory(tmp_path):
@@ -140,8 +184,11 @@ def test_loop_executes_tools_and_witnesses_the_full_trajectory(tmp_path):
                     ToolExecutor(root=str(tmp_path)), led, max_steps=4)
     assert res["final"] == "the file says hello world"
     assert res["steps"] == 2 and res["verified"] is True
+    # the continuation prompt the model actually saw is recorded as a user turn too
     assert [e.kind for e in led.entries] == \
-        ["user", "assistant", "tool_call", "tool_result", "assistant"]
+        ["user", "assistant", "tool_call", "tool_result", "user", "assistant"]
+    cont = led.entries[4]
+    assert cont.kind == "user" and "TOOL RESULTS" in cont.content
     tr = next(e for e in led.entries if e.kind == "tool_result")
     assert "hello world" in tr.content
 
@@ -159,14 +206,18 @@ def test_loop_respects_the_gate_and_keeps_going(tmp_path):
     assert "[gate]" in tr.content
 
 
-def test_loop_stops_at_max_steps_and_still_verifies(tmp_path):
-    # a model that always asks for another tool never "finishes"
+def test_loop_stops_at_max_steps_and_reports_an_honest_verdict(tmp_path):
+    # a model that always asks for another tool never "finishes". max_steps
+    # exhaustion is NOT a verified run: the chain is intact (chain_ok) but no real
+    # final answer was produced, so the composite verdict is honestly False.
     agent = ScriptedAgent(['TOOL list_dir {"path": "."}'] * 10)
     led = SessionLedger()
     res = run_agent(agent, "loop forever",
                     ToolExecutor(root=str(tmp_path)), led, max_steps=3)
-    assert res["steps"] == 3 and res["verified"] is True
-    assert "max_steps" in res["final"]
+    assert res["steps"] == 3 and "max_steps" in res["final"]
+    assert res["chain_ok"] is True          # in-memory integrity holds
+    assert res["final_answer"] is False     # but no answer was produced
+    assert res["verified"] is False         # so the composite is not a vacuous True
 
 
 def test_tools_system_prompt_is_installed_once():
@@ -176,3 +227,67 @@ def test_tools_system_prompt_is_installed_once():
     run_agent(agent, "again", ToolExecutor(root="."), SessionLedger(), max_steps=1)  # resume
     assert TOOLS_SYSTEM in agent.system
     assert agent.system.count(TOOLS_SYSTEM) == 1     # guard prevents re-append
+
+
+# ── witnessed loop: failures, full receipts, honest verdict ────────────────
+
+def test_mid_loop_backend_failure_is_recorded_not_an_uncaught_raise(tmp_path):
+    # 1 good step (a tool call), then every backend dies. The partial work must be
+    # witnessed with an error entry + checkpoint, not thrown away as a traceback.
+    (tmp_path / "a.txt").write_text("hi", encoding="utf-8")
+    agent = FailingAgent(['TOOL read_file {"path": "a.txt"}'])   # then send() raises
+    led = SessionLedger()
+    res = run_agent(agent, "read it", ToolExecutor(root=str(tmp_path)), led, max_steps=4)
+    kinds = [e.kind for e in led.entries]
+    assert "error" in kinds                                   # the failure is on the record
+    err = next(e for e in led.entries if e.kind == "error")
+    assert "backends failed" in err.content
+    assert res["final_answer"] is False and res["verified"] is False
+    assert res["chain_ok"] is True and res["checkpoint"] == led.checkpoint()
+
+
+def test_assistant_entries_store_a_re_derivable_receipt(tmp_path):
+    agent = ScriptedAgent(["the answer"])
+    led = SessionLedger()
+    run_agent(agent, "q", ToolExecutor(root=str(tmp_path)), led, max_steps=2)
+    a = next(e for e in led.entries if e.kind == "assistant")
+    rec = a.meta["receipt"]
+    # the FULL receipt is stored (not just an opaque id), so a stranger can re-derive it
+    assert {"request_hash", "prompt_hash", "response_hash", "model_ref"} <= set(rec)
+    assert recompute_receipt_id(rec) == rec["receipt_id"]
+
+
+def test_verify_receipts_is_fail_closed_on_a_tampered_receipt(tmp_path):
+    agent = ScriptedAgent(["the answer"])
+    led = SessionLedger()
+    res = run_agent(agent, "q", ToolExecutor(root=str(tmp_path)), led, max_steps=2)
+    assert res["receipts_ok"] is True
+    # tamper the stored response_hash: the receipt_id no longer re-derives
+    a = next(e for e in led.entries if e.kind == "assistant")
+    a.meta["receipt"]["response_hash"] = "0" * 16
+    assert verify_receipts(led) is False
+
+
+def test_load_rejects_a_tampered_ledger(tmp_path):
+    led = SessionLedger()
+    led.append("user", "hi")
+    led.append("assistant", "yo")
+    p = tmp_path / "s.jsonl"
+    led.save(str(p))
+    lines = p.read_text(encoding="utf-8").splitlines()
+    obj = json.loads(lines[0])
+    obj["content"] = "HACKED"                                 # break the chain
+    lines[0] = json.dumps(obj)
+    p.write_text("\n".join(lines), encoding="utf-8")
+    with pytest.raises(ValueError, match="verify"):
+        SessionLedger.load(str(p))
+
+
+def test_witnessed_edit_paths_are_only_the_recorded_write_targets():
+    led = SessionLedger()
+    led.append("user", "goal")
+    led.append("tool_call", 'write_file {"content": "x", "path": "src/a.py"}')
+    led.append("tool_call", 'edit_file {"new": "n", "old": "o", "path": "src/b.py"}')
+    led.append("tool_call", 'run {"cmd": "echo pwned > src/c.py"}')   # shell write: NOT witnessed
+    led.append("tool_call", 'read_file {"path": "src/d.py"}')          # a read is not an edit
+    assert witnessed_edit_paths(led) == ["src/a.py", "src/b.py"]

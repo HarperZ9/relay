@@ -174,3 +174,59 @@ def test_stream_falls_back_when_no_streaming_backend():
     resp = agent.stream("hi", seen.append)
     assert resp["backend"] == "serve" and seen == ["from serve"]
     assert [h["role"] for h in agent.history] == ["user", "assistant"]   # no dup user turn
+
+
+def test_stream_error_chunk_raises_not_silently_receipted():
+    # Ollama emits tokens, then a mid-stream {"error": ...} and stops. The old code
+    # dropped the error chunk and receipted the PARTIAL text as a finished turn.
+    # It must instead name the failure loudly, never mint a receipt over a fragment.
+    def st(body):
+        yield {"message": {"content": "par"}}
+        yield {"error": "cuda out of memory"}
+    b = OllamaBackend(stream_transport=st)
+    b._resolved = "qwen2.5:7b"
+    with pytest.raises(BackendError, match="cuda out of memory"):
+        list(b.chat_stream([{"role": "user", "content": "hi"}],
+                           system="", max_tokens=10, temperature=0, seed=0))
+
+
+def test_stream_without_done_terminator_is_a_named_truncation():
+    # A stream that closes cleanly without the done:true terminator is truncated,
+    # not a completed turn.
+    def st(body):
+        yield {"message": {"content": "partial"}}      # no done:true
+    b = OllamaBackend(stream_transport=st)
+    b._resolved = "qwen2.5:7b"
+    with pytest.raises(BackendError, match="truncat"):
+        list(b.chat_stream([{"role": "user", "content": "hi"}],
+                           system="", max_tokens=10, temperature=0, seed=0))
+
+
+def test_failover_errors_are_surfaced_on_eventual_success():
+    # serve passes health but /generate 500s; ollama answers. The failed serve
+    # attempt must appear on the response (not be discarded on success), so an
+    # auditor can see the trained tier failed mid-run.
+    routes = {"/health": (200, {"ok": True, "model_ref": "14b"}),
+              "/generate": (500, {"error": "cuda oom"}), **OLLAMA_LIVE}
+    agent, _ = _agent(routes)
+    resp = agent.send("hi")
+    assert resp["backend"] == "ollama"
+    assert resp.get("failover") and any("serve" in e for e in resp["failover"])
+
+
+def test_hosted_turn_records_seed_not_applied():
+    # A hosted backend never transmits a seed, so the receipt must not claim one.
+    from relay.endpoints import OpenAICompatBackend
+
+    def tp(method, url, headers, body, timeout):
+        return 200, {"choices": [{"message": {"content": "hi"}}]}
+    b = OpenAICompatBackend(name="deepseek", base_url="http://x", model="m", transport=tp)
+    agent = LocalAgent(backends=[b])
+    resp = agent.send("q")
+    assert resp["x_receipt"]["seed"] is None                 # non-reproducible, not seed 0
+
+
+def test_serve_turn_still_records_the_applied_seed():
+    agent, _ = _agent({**SERVE_LIVE, **OLLAMA_LIVE})
+    resp = agent.send("hi")
+    assert resp["x_receipt"]["seed"] == 0                    # serve pins the seed it was given

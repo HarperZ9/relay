@@ -26,6 +26,16 @@ def test_initialize_and_tools_list():
     assert tools == {"local_agent_health", "local_agent_chat", "local_agent_run"}
 
 
+def test_run_tool_description_does_not_overclaim_exec_sandbox():
+    # The MCP description an auto-consuming client trusts must not claim a blanket
+    # root sandbox that the run/exec tool does not honor (exec only sets cwd).
+    from relay.local_mcp import TOOLS
+    run_tool = next(t for t in TOOLS if t["name"] == "local_agent_run")
+    desc = run_tool["description"]
+    assert "tools sandboxed to root" not in desc
+    assert "cwd" in desc.lower() or "not path-confined" in desc.lower()
+
+
 def test_health_tool_returns_tier_report():
     resp = handle(_req("tools/call", params={"name": "local_agent_health", "arguments": {}}))
     report = json.loads(resp["result"]["content"][0]["text"])
