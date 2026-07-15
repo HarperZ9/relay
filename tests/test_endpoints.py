@@ -7,6 +7,8 @@ never a silent default; (3) an error response is a typed BackendError; (4) the
 CLI (subscription) backend runs the operator's client and surfaces failures;
 (5) build_endpoints assembles only the modes whose credentials are present.
 """
+import json
+
 import pytest
 
 from relay.endpoints import (
@@ -60,6 +62,43 @@ def test_error_response_is_typed_backend_error():
                             transport=_tx(401, {"error": "invalid key"}))
     with pytest.raises(BackendError, match="codex returned 401"):
         b.chat(_MSG, system="", max_tokens=10, temperature=0, seed=0)
+
+
+def test_non_2xx_with_a_valid_shape_still_fails_over():
+    """Success is decided by the HTTP status, not by whether an error body happens to carry the
+    success shape. A 429/500 whose JSON still parses as choices[0].message.content must raise so the
+    router fails over, never be returned as a completion."""
+    b = OpenAICompatBackend("codex", "https://api.openai.com/v1", "gpt-4o", key_env="OPENAI_API_KEY",
+                            transport=_tx(429, {"choices": [{"message": {"content": "slow down"}}]}))
+    with pytest.raises(BackendError, match="codex returned 429"):
+        b.chat(_MSG, system="", max_tokens=10, temperature=0, seed=0)
+
+
+def test_null_content_raises_instead_of_returning_none():
+    """A 200 carrying content:null is not a completion. Returning text=None crashes the turn later,
+    OUTSIDE the failover try, so the ladder never gets to try the next endpoint. It must raise."""
+    b = OpenAICompatBackend("codex", "https://api.openai.com/v1", "gpt-4o", key_env="OPENAI_API_KEY",
+                            transport=_tx(200, {"choices": [{"message": {"content": None}}]}))
+    with pytest.raises(BackendError):
+        b.chat(_MSG, system="", max_tokens=10, temperature=0, seed=0)
+
+
+def test_provider_mode_never_sends_the_official_key_to_a_gateway(monkeypatch):
+    """provider mode points at an arbitrary <PROVIDER>_PROVIDER_BASE_URL gateway. It must use only
+    the dedicated <PROVIDER>_PROVIDER_KEY; it must never fall back to the provider's OFFICIAL API key,
+    which would replay the operator's real credential to a third-party URL."""
+    monkeypatch.delenv("CODEX_PROVIDER_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-official-secret")
+    monkeypatch.setenv("CODEX_PROVIDER_BASE_URL", "https://openrouter.ai/api/v1")
+    lad = build_endpoints(providers=["codex"], modes=("provider",), only_configured=False)
+    assert [b.name for b in lad] == ["codex-provider"]
+    # the gateway backend must NOT carry the official key env
+    assert lad[0].key_env != "OPENAI_API_KEY"
+    # and with no provider key set, nothing authenticates the gateway with the official secret
+    sink = {}
+    lad[0].transport = _tx(200, {"choices": [{"message": {"content": "ok"}}]}, sink)
+    lad[0].chat(_MSG, system="", max_tokens=1, temperature=0, seed=0)
+    assert "sk-official-secret" not in json.dumps(sink.get("headers", {}))
 
 
 def test_health_gates_on_credential(monkeypatch):
