@@ -147,7 +147,10 @@ class OllamaBackend:
         text = (obj.get("message") or {}).get("content")
         if status != 200 or text is None:
             raise BackendError(f"ollama returned {status}: {obj.get('error', obj)}")
-        return {"text": text, "model_ref": f"ollama:{model}", "seed": seed}
+        gen = {"text": text, "model_ref": f"ollama:{model}", "seed": seed}
+        if obj.get("done_reason"):        # "length" -> truncation, surfaced by the receipt
+            gen["stop_reason"] = obj["done_reason"]
+        return gen
 
     def _body(self, messages, system, max_tokens, temperature, seed, stream):
         model = self._resolved or self.model
@@ -158,15 +161,28 @@ class OllamaBackend:
         }).encode()
 
     def chat_stream(self, messages, *, system, max_tokens, temperature, seed):
-        """Yield text chunks as the model produces them (Ollama NDJSON stream)."""
+        """Yield text chunks as the model produces them (Ollama NDJSON stream).
+
+        A mid-stream error object, or a stream that ends without the done:true
+        terminator, is a FAILURE — it raises BackendError rather than being
+        silently dropped and the partial text receipted as a finished turn."""
         model = self._resolved or self.model
         if not model:
             raise BackendError("no ollama model resolved (call health() first)")
         _, body = self._body(messages, system, max_tokens, temperature, seed, True)
+        done = False
         for chunk in self._iter_stream(body):
+            if chunk.get("error"):
+                raise BackendError(f"ollama stream error: {chunk['error']}")
             piece = (chunk.get("message") or {}).get("content")
             if piece:
                 yield piece
+            if chunk.get("done"):
+                done = True
+                if chunk.get("done_reason") == "length":
+                    raise BackendError("ollama stream truncated (num_predict/length)")
+        if not done:
+            raise BackendError("ollama stream ended without done:true (truncated)")
 
     def _iter_stream(self, body):
         if self.stream_transport is not None:
@@ -229,7 +245,8 @@ class LocalAgent:
         return [b for b in self.backends
                 if (self.prefer == "auto" or b.name == self.prefer) and b.health()]
 
-    def _finalize(self, gen: dict, backend_name: str) -> dict:
+    def _finalize(self, gen: dict, backend_name: str,
+                  failover: "list | None" = None) -> dict:
         """Build the receipt for a completion, record the assistant turn, return
         the Anthropic-shaped response. Shared by send() and stream()."""
         req_params = {"prompt": _flatten(self.history), "system": self.system,
@@ -238,6 +255,8 @@ class LocalAgent:
         resp = translate_response(gen, req_params, gen["model_ref"])
         self.history.append({"role": "assistant", "content": gen["text"]})
         resp["backend"] = backend_name
+        if failover:                     # backends that failed before this one won:
+            resp["failover"] = failover  # record it so the win does not erase the failure
         return resp
 
     def send(self, user_text: str) -> dict:
@@ -255,7 +274,7 @@ class LocalAgent:
             except BackendError as e:
                 errors.append(f"{b.name}: {e}")
                 continue
-            return self._finalize(gen, b.name)
+            return self._finalize(gen, b.name, failover=errors)
         raise BackendError("all healthy backends failed: " + "; ".join(errors))
 
     def stream(self, user_text: str, on_chunk) -> dict:

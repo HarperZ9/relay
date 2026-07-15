@@ -85,12 +85,16 @@ class OpenAICompatBackend:
                              headers, body, self.timeout, self.name)
         _require_ok(status, obj, self.name)
         try:
-            text = obj["choices"][0]["message"]["content"]
+            choice = obj["choices"][0]
+            text = choice["message"]["content"]
         except (KeyError, IndexError, TypeError):
             raise BackendError(f"{self.name} returned {status}: {obj.get('error', obj)}")
         if not isinstance(text, str):
             raise BackendError(f"{self.name} returned {status} with null/non-text content")
-        return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": seed}
+        # seed is not transmitted to a hosted API, so the turn is non-reproducible:
+        # report seed=None rather than echoing the requested seed as if it were pinned.
+        return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": None,
+                "stop_reason": choice.get("finish_reason")}
 
 
 @dataclass
@@ -120,7 +124,10 @@ class AnthropicBackend:
             text = "".join(b.get("text", "") for b in obj["content"] if b.get("type") == "text")
         except (KeyError, TypeError):
             raise BackendError(f"{self.name} returned {status}: {obj.get('error', obj)}")
-        return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": seed}
+        # pass Anthropic's real stop_reason through (its "max_tokens" must NOT be
+        # relabeled to end_turn); seed=None since a hosted turn is non-reproducible.
+        return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": None,
+                "stop_reason": obj.get("stop_reason")}
 
 
 @dataclass
@@ -147,10 +154,14 @@ class GeminiBackend:
         status, obj = _guard(self.transport, "POST", url, {"Content-Type": "application/json"},
                              json.dumps(payload).encode(), self.timeout, self.name)
         try:
-            text = "".join(p.get("text", "") for p in obj["candidates"][0]["content"]["parts"])
+            cand = obj["candidates"][0]
+            text = "".join(p.get("text", "") for p in cand["content"]["parts"])
         except (KeyError, IndexError, TypeError):
             raise BackendError(f"{self.name} returned {status}: {obj.get('error', obj)}")
-        return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": seed}
+        # Gemini's finishReason ("MAX_TOKENS") is normalized by translate_response;
+        # seed=None since the hosted turn is non-reproducible.
+        return {"text": text, "model_ref": f"{self.name}:{self.model}", "seed": None,
+                "stop_reason": cand.get("finishReason")}
 
 
 @dataclass
@@ -180,7 +191,9 @@ class CliBackend:
             raise BackendError(f"{self.name} cli failed: {e}") from e
         if rc != 0:
             raise BackendError(f"{self.name} cli exit {rc}: {(err or '').strip()[:200]}")
-        return {"text": (out or "").strip(), "model_ref": f"{self.name}:cli", "seed": seed}
+        # the CLI applies neither the seed nor the sampling params we pass, so the
+        # turn is non-reproducible: seed=None, not a seed that had no effect.
+        return {"text": (out or "").strip(), "model_ref": f"{self.name}:cli", "seed": None}
 
 
 # provider -> how to reach it. base URLs are the public APIs; models are
