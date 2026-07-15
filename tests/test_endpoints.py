@@ -49,6 +49,21 @@ def test_anthropic_parses_content_blocks(monkeypatch):
     assert sink["headers"]["x-api-key"] == "sk-test" and "anthropic-version" in sink["headers"]
 
 
+def test_hosted_backends_surface_truncation_not_a_fake_end_turn(monkeypatch):
+    # A hosted backend's own truncation signal must reach translate_response so a
+    # length-cut answer is reported as max_tokens, never relabeled to end_turn.
+    from relay.messages_api import translate_response
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    b = AnthropicBackend("claude", "https://api.anthropic.com", "claude-sonnet-4-5",
+                         transport=_tx(200, {"content": [{"type": "text", "text": "cut"}],
+                                             "stop_reason": "max_tokens"}))
+    gen = b.chat(_MSG, system="", max_tokens=1, temperature=0, seed=0)
+    assert gen["stop_reason"] == "max_tokens" and gen["seed"] is None
+    resp = translate_response(gen, {"prompt": "p", "requested_model": "claude-sonnet-4-5"},
+                              gen["model_ref"])
+    assert resp["stop_reason"] == "max_tokens"
+
+
 def test_gemini_parses_candidates():
     b = GeminiBackend("gemini", "https://x/v1beta", "gemini-2.5-flash", key_env="GEMINI_API_KEY",
                       transport=_tx(200, {"candidates": [{"content": {"parts": [{"text": "gm"}]}}]}))
