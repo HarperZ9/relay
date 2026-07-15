@@ -47,6 +47,18 @@ def test_exec_gate_and_denylist():
     assert not blocked.ok and "denylist" in blocked.output      # destructive blocked even when allowed
 
 
+def test_exec_implies_write_capability(tmp_path):
+    # A shell can write, so --allow-exec cannot honestly keep files immutable. The
+    # gate no longer presents writes as 'off' while exec is on: enabling exec
+    # enables write, consistently — write_file is allowed, not falsely gated-off,
+    # exactly the capability the run tool already grants.
+    assert ToolGate(allow_exec=True).allow_write is True
+    assert ToolGate(allow_exec=False).allow_write is False       # exec off -> unchanged
+    ex = ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_exec=True))
+    w = ex.execute("write_file", {"path": "a.txt", "content": "x"})
+    assert w.ok and (tmp_path / "a.txt").read_text() == "x"
+
+
 def test_write_gate_default_deny_then_allowed(tmp_path):
     denied = ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_write=False))
     r = denied.execute("write_file", {"path": "x.txt", "content": "hi"})

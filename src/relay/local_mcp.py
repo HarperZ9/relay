@@ -30,7 +30,7 @@ TOOLS = [
                      "properties": {"prompt": {"type": "string"},
                                     "backend": {"type": "string"}, **_ONLINE}}},
     {"name": "local_agent_run",
-     "description": "Run a gated agentic task (tools sandboxed to root; write/exec off unless allowed); returns the final answer and a verifiable ledger checkpoint.",
+     "description": "Run a gated agentic task; write/exec off unless allowed. File tools (read/list/write) are confined to root; run/exec sets only cwd, so an allowed shell is NOT path-confined and can reach outside root. allow_exec implies write (a shell can write). Returns the final answer and a verifiable ledger checkpoint.",
      "inputSchema": {"type": "object", "required": ["goal"],
                      "properties": {"goal": {"type": "string"}, "root": {"type": "string"},
                                     "allow_write": {"type": "boolean"}, "allow_exec": {"type": "boolean"},

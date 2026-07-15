@@ -40,9 +40,13 @@ A missing credential just drops that tier from the ladder.
   C#/Swift/PHP/Ruby via patterns) so the model finds the right file.
 - **`edit_file`**: precise search/replace where the target must match exactly
   once, so an ambiguous edit is refused, not guessed.
-- **`read_file` / `list_dir`**: sandboxed to `--root`.
-- **`write_file` / `run`**: off by default; enabled with `--allow-write` /
-  `--allow-exec`, and a denylist blocks destructive commands even then.
+- **`read_file` / `list_dir`**: confined to `--root`.
+- **`write_file`**: off by default; enabled with `--allow-write`; confined to `--root`.
+- **`run`**: off by default; enabled with `--allow-exec`. A shell can write, so
+  `--allow-exec` implies write, and unlike the file tools `run` is not confined to
+  `--root` (it sets only the working directory). A denylist refuses a few literal
+  destructive spellings — a guardrail against a small model wrecking the tree, not
+  a security boundary.
 
 ## The wedge: a provable run
 
