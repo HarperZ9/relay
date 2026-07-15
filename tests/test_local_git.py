@@ -42,6 +42,33 @@ def test_commit_run_commits_and_binds_the_checkpoint():
     assert "change the greeting" in commit_call[-1]
 
 
+def test_commit_stages_only_the_witnessed_edit_paths():
+    # With an explicit witnessed edit set, the commit stages exactly those paths,
+    # never `add -A` — so a dirty file or a shell-written file the ledger did not
+    # record as content is not swept into a commit that claims ledger provenance.
+    g = FakeGit(_REPO_DIRTY)
+    commit_run("/x", "goal", "CHK", paths=["src/app.py", "src/util.py"], run=g)
+    add_call = next(c for c in g.calls if c[0] == "add")
+    assert add_call == ["add", "--", "src/app.py", "src/util.py"]
+    assert not any(c == ["add", "-A"] for c in g.calls)
+
+
+def test_witnessed_commit_message_notes_the_edit_set():
+    g = FakeGit(_REPO_DIRTY)
+    commit_run("/x", "change greeting", "CHK", paths=["src/app.py"], run=g)
+    msg = next(c for c in g.calls if c[0] == "commit")[-1]
+    assert "CHK" in msg and "witnessed-edits" in msg
+
+
+def test_commit_refuses_when_no_edits_were_witnessed():
+    # The working tree is dirty, but the ledger recorded no write/edit targets.
+    # Committing arbitrary tree state would attribute it to the trajectory falsely.
+    g = FakeGit(_REPO_DIRTY)
+    result = commit_run("/x", "goal", "CHK", paths=[], run=g)
+    assert result["committed"] is False and "witnessed" in result["reason"]
+    assert not any(c[0] == "commit" for c in g.calls)
+
+
 def test_not_a_repo_is_reported_not_fatal():
     g = FakeGit({"rev-parse --is-inside-work-tree": (128, "", "fatal: not a git repo")})
     result = commit_run("/x", "goal", "CHK", run=g)

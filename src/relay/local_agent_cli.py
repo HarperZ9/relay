@@ -21,7 +21,7 @@ from .local_agent import (
     health_report,
 )
 from .local_git import commit_run
-from .local_loop import run_agent
+from .local_loop import run_agent, witnessed_edit_paths
 from .local_session import SessionLedger
 from .local_tools import ToolExecutor, ToolGate
 
@@ -111,7 +111,10 @@ def _run_agentic(args) -> int:
         ledger.save(args.save)
     committed = ""
     if args.auto_commit:
-        c = commit_run(args.root, args.prompt, result["checkpoint"])
+        # stage only the files the ledger witnessed as edits, so the commit binds
+        # the trajectory rather than any other change in the working tree.
+        c = commit_run(args.root, args.prompt, result["checkpoint"],
+                       paths=witnessed_edit_paths(ledger))
         committed = (f" | committed {c['sha']}" if c.get("committed")
                      else f" | not committed ({c.get('reason')})")
     print(f"\n[agent | {result['steps']} step(s) | {result['entries']} ledger entries | "

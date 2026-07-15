@@ -52,10 +52,13 @@ A missing credential just drops that tier from the ladder.
 
 Every turn, tool call, and result is appended to a **hash-chained session
 ledger**. A saved run is tamper-evident: reload it and `verify()` re-derives the
-chain. With `--auto-commit`, the git commit message carries the ledger
-checkpoint, so your version history points back at the exact witnessed trajectory
-that produced the change. Each model turn also carries a content-addressed
-receipt. No other coding agent gives you a run you can *prove*, not just read.
+chain (a broken chain is refused, not loaded). With `--auto-commit`, relay stages
+only the files the ledger recorded as edits and carries the checkpoint in the
+message, so the commit binds the witnessed edit set — unrelated or shell-written
+working-tree changes are left out, never attributed to the run. Each model turn
+also carries a content-addressed receipt whose id a stranger can re-derive from
+the saved record. No other coding agent gives you a run you can *prove*, not just
+read.
 
 ## Use from an agent (MCP)
 
