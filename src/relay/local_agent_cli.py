@@ -138,9 +138,12 @@ def main(argv: list[str] | None = None) -> int:
     # agentic mode
     ap.add_argument("--agent", action="store_true",
                     help="run the prompt as an agentic task with gated tools + a witnessed ledger")
-    ap.add_argument("--root", default=".", help="sandbox root for file/exec tools (--agent)")
+    ap.add_argument("--root", default=".", help="root for file tools read/list/write (--agent); "
+                    "note run/exec sets only cwd and is NOT confined to root")
     ap.add_argument("--allow-write", action="store_true", dest="allow_write")
-    ap.add_argument("--allow-exec", action="store_true", dest="allow_exec")
+    ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
+                    help="enable the run tool; a shell can write, so this implies --allow-write "
+                    "and is not path-confined")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
     ap.add_argument("--save", default="", help="save the session ledger to this JSONL path")
     ap.add_argument("--auto-commit", action="store_true", dest="auto_commit",

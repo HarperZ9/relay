@@ -2,10 +2,14 @@
 
 Small local models cannot be trusted with native tool-calling or with an open
 shell, so the tool surface is (1) a simple text protocol a 7B model can emit
-reliably, and (2) gated by default: file reads/lists are sandboxed to a root;
-writes and command execution are OFF unless explicitly allowed, and even then a
-denylist blocks obviously destructive commands. Every call returns a ToolResult
-that the loop records into the witnessed session ledger.
+reliably, and (2) gated by default: file reads/lists/writes are sandboxed to a
+root; writes and command execution are OFF unless explicitly allowed. Two honest
+limits on the exec path: `run` sets only cwd, so an allowed shell reaches paths
+OUTSIDE the root (it is not _safe_path-confined like the file tools); and its
+denylist catches only a few literal spellings of destructive commands (a
+guardrail against a small model, not a security boundary — trivial variants slip
+through). Because a shell can write, --allow-exec implies --allow-write. Every
+call returns a ToolResult the loop records into the witnessed session ledger.
 
 Protocol (one call per line, args as a JSON object):
     TOOL read_file {"path": "harness/loop.py"}
@@ -41,9 +45,18 @@ class ToolResult:
 
 @dataclass
 class ToolGate:
-    """Default-deny for anything that writes or executes."""
+    """Default-deny for anything that writes or executes.
+
+    exec is a SUPERSET of write: an allowed shell can create/overwrite files
+    (redirection, tee, sed -i, python -c). So --allow-exec implies --allow-write —
+    the gate couples them rather than presenting writes as 'off' while an open
+    shell is enabled, which would be a gate the run path silently bypasses."""
     allow_write: bool = False
     allow_exec: bool = False
+
+    def __post_init__(self):
+        if self.allow_exec:
+            self.allow_write = True
 
     def check(self, name: str, args: dict) -> "str | None":
         if name in ("write_file", "edit_file") and not self.allow_write:
