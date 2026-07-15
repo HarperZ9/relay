@@ -70,8 +70,11 @@ def _call(params: dict) -> dict:
                                             allow_exec=bool(args.get("allow_exec"))))
             r = run_agent(_agent(args), args["goal"], ex, SessionLedger(),
                           max_steps=int(args.get("max_steps", 6)))
+            # verified is the honest composite (chain + re-derivable receipts + a real
+            # final answer), never the self-confirming in-memory chain check alone.
             return _text({"final": r["final"], "steps": r["steps"],
-                          "verified": r["verified"], "checkpoint": r["checkpoint"]})
+                          "verified": r["verified"], "final_answer": r["final_answer"],
+                          "chain_ok": r["chain_ok"], "checkpoint": r["checkpoint"]})
         return {"content": [{"type": "text", "text": f"unknown tool {name!r}"}], "isError": True}
     except Exception as e:
         return {"content": [{"type": "text", "text": f"[error] {type(e).__name__}: {e}"}],
