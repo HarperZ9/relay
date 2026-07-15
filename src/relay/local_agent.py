@@ -24,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Protocol
 
-from .messages_api import make_receipt, translate_response
+from .messages_api import translate_response
 
 # A transport is (method, url, body_bytes_or_none, timeout) -> (status, parsed_json).
 # The default hits the network; tests inject a fake to stay hermetic.
