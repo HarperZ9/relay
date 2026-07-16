@@ -72,8 +72,8 @@ relay --agent "fix the failing test in paginate()" --root . --allow-write \
       --check "pytest -q" --auto-commit
 ```
 
-The check carries *your* authority, not the model's: it runs outside the tool gate
-and is never a call the model can emit or steer. A failed check means the run is not
+The check carries *your* authority, not the model's: it runs outside the tool
+permission boundary and is never a call the model can emit or steer. A failed check means the run is not
 accepted, `--auto-commit` is skipped (a broken tree is never committed on your
 behalf), and the exit code is non-zero, so `--agent --check` works as a CI check over the
 agent's own work. `accepted` = a provable trajectory whose acceptance check held.
@@ -89,12 +89,12 @@ an accept into a refusal, never the reverse.
 
 Third-party data an agent reads (a file, a webpage, a tool result) can carry an
 instruction that tries to make it exfiltrate, overwrite, or escape. relay's defense
-is the gate: tool output is data, never a command, and writes and exec are off by
+is the boundary: tool output is data, never a command, and writes and exec are off by
 default. `relay --probe-injection` measures that defense. It runs a fixed,
-inspectable corpus of injection scenarios through the gated executor, assuming the
+inspectable corpus of injection scenarios through the permission-checked executor, assuming the
 worst case that the model was fully fooled and emitted exactly the smuggled call,
 and reports **containment** with a re-derivable receipt. It exits non-zero if any
-scenario is not contained, so it works as a CI gate.
+scenario is not contained, so it works as a CI check.
 
 ```bash
 relay --probe-injection                 # safe default: every injection contained
