@@ -105,6 +105,18 @@ It generates no attacks (the corpus is readable data) and it can fail, so it is 
 real measurement, not a reassurance. Harden the defender, measure it, feed the
 failures back.
 
+## A run a reviewer can read
+
+Every `--agent` run also ships a **reviewability projection** derived purely from the
+witnessed ledger, in the terms a senior reviewer checks first: which files were
+`edited_unread` (changed without ever being read), which edits no passing check
+covered (`unverified_edits`), the failed-call scars, and a `reviewability` score over
+read-before-write, verified, and clean-call ratios. Alongside it, a `risk` table tiers
+each edit by mechanical signals (lines, nesting depth, branching, duplicate lines);
+a high-tier edit **demands** a stronger receipt. These are facts, never generated
+prose, so a surface can enforce them. Expert reviewers get the middle of the run, not
+just its ending.
+
 ## Use from an agent (MCP)
 
 `relay --mcp` is a zero-dep stdio MCP server exposing `local_agent_health`,

@@ -104,6 +104,7 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
 def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
           check_passed: "bool | None" = None) -> dict:
     from .integrity import integrity_report, trajectory_integrity
+    from .review import risk_review, run_review
     chain_ok = ledger.verify()
     receipts_ok = verify_receipts(ledger)
     verified = chain_ok and receipts_ok and final_answer
@@ -124,6 +125,10 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
             "check_passed": check_passed,  # the acceptance check's verdict, or None if none was run
             "integrity": integrity,        # reward-hacking flags over the witnessed edit set
             "check_trusted": check_trusted,  # a pass survives only if the grader was not tampered with
+            # the reviewability projection: what a senior reviewer checks first, and
+            # per-edit risk tiers, both derived from the witnessed ledger (facts, not prose)
+            "review": run_review(ledger.entries),
+            "risk": risk_review(ledger.entries),
             # ACCEPTED = a verified trajectory whose acceptance check did not fail AND
             # whose pass was not gamed by tampering with the check. No check -> collapses
             # to `verified`; a failed OR tampered pass is never accepted.

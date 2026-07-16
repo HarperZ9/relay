@@ -335,7 +335,9 @@ def test_cli_does_not_pass_or_commit_a_run_that_never_finished(tmp_path, monkeyp
     monkeypatch.setattr(cli, "run_agent",
                         lambda *a, **k: {"final": "[max_steps]", "steps": 3, "entries": 5,
                                          "checkpoint": "c" * 32, "verified": False,
-                                         "accepted": False, "check_passed": None})
+                                         "accepted": False, "check_passed": None,
+                                         "review": {"reviewability": 0.0, "edited_unread": [], "unverified_edits": [], "failed_calls": 0},
+                                         "risk": {"demands": []}})
     called = {"commit": False}
     monkeypatch.setattr(cli, "commit_run",
                         lambda *a, **k: (called.update(commit=True), {"committed": True, "sha": "x"})[1])
@@ -357,7 +359,10 @@ def test_cli_skips_commit_and_exits_nonzero_when_the_check_fails(tmp_path, monke
     monkeypatch.setattr(cli, "run_agent",
                         lambda *a, **k: {"final": "done", "steps": 1, "entries": 3,
                                          "checkpoint": "c" * 32, "verified": True,
-                                         "accepted": False, "check_passed": False})
+                                         "accepted": False, "check_passed": False,
+                                         "integrity": {"clean": True, "flag_count": 0},
+                                         "review": {"reviewability": 0.0, "edited_unread": [], "unverified_edits": [], "failed_calls": 0},
+                                         "risk": {"demands": []}})
     called = {"commit": False}
     def _no_commit(*a, **k):
         called["commit"] = True
