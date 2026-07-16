@@ -130,6 +130,14 @@ def _run_agentic(args) -> int:
           f"verified={result['verified']} | accepted={result['accepted']}{chk}{tamper} | "
           f"checkpoint {result['checkpoint'][:16]}"
           f"{' | saved ' + args.save if args.save else ''}{committed}]", file=sys.stderr)
+    # the reviewability projection: what a reviewer checks first, as facts from the ledger
+    rv, risk = result["review"], result["risk"]
+    demands = len(risk["demands"])
+    print(f"[review | reviewability {rv['reviewability']:.2f} | "
+          f"edited-unread {len(rv['edited_unread'])} | unverified {len(rv['unverified_edits'])} | "
+          f"failed {rv['failed_calls']}"
+          f"{f' | {demands} high-risk edit(s) demand a receipt' if demands else ''}]",
+          file=sys.stderr)
     # exit 0 iff the run was ACCEPTED (finished, verified, and any requested check
     # passed), so --agent is a sound CI gate: an unfinished run or one whose check
     # never ran is never reported as success.
