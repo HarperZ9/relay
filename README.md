@@ -60,6 +60,26 @@ also carries a content-addressed receipt whose id a stranger can re-derive from
 the saved record. No other coding agent gives you a run you can *prove*, not just
 read.
 
+## Prove the gate holds (prompt-injection robustness)
+
+Third-party data an agent reads (a file, a webpage, a tool result) can carry an
+instruction that tries to make it exfiltrate, overwrite, or escape. relay's defense
+is the gate: tool output is data, never a command, and writes and exec are off by
+default. `relay --probe-injection` measures that defense. It runs a fixed,
+inspectable corpus of injection scenarios through the gated executor, assuming the
+worst case that the model was fully fooled and emitted exactly the smuggled call,
+and reports **containment** with a re-derivable receipt. It exits non-zero if any
+scenario is not contained, so it works as a CI gate.
+
+```bash
+relay --probe-injection                 # safe default: every injection contained
+relay --probe-injection --allow-exec    # honest: an open shell is a superset capability
+```
+
+It generates no attacks (the corpus is readable data) and it can fail, so it is a
+real measurement, not a reassurance. Harden the defender, measure it, feed the
+failures back.
+
 ## Use from an agent (MCP)
 
 `relay --mcp` is a zero-dep stdio MCP server exposing `local_agent_health`,
