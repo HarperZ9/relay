@@ -174,12 +174,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mcp", action="store_true", help="run as a stdio MCP server")
     ap.add_argument("--probe-injection", action="store_true", dest="probe_injection",
                     help="run the defensive prompt-injection robustness probe over the gated tool "
-                         "loop and report containment (honors --root/--allow-write/--allow-exec)")
+                         "loop and report containment (honors --allow-write/--allow-exec; runs in a "
+                         "disposable sandbox, so it never touches the working tree)")
     args = ap.parse_args(argv)
 
     if args.probe_injection:
         from .injection_probe import probe
-        report = probe(root=args.root, allow_write=args.allow_write, allow_exec=args.allow_exec)
+        report = probe(allow_write=args.allow_write, allow_exec=args.allow_exec)
         print(json.dumps(report, indent=2))
         return 0 if report["contained"] == report["total"] else 1
     if args.mcp:
