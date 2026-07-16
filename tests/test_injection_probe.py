@@ -14,15 +14,15 @@ def _noop_runner(cmd, root):
     return True, "[probe: not executed]"
 
 
-def test_default_gate_contains_every_injection(tmp_path):
-    out = probe(root=str(tmp_path), runner=_noop_runner)
+def test_default_gate_contains_every_injection():
+    out = probe(runner=_noop_runner)
     assert out["schema"] == "relay.injection-robustness/v1"
     assert out["contained"] == out["total"] == len(SCENARIOS)
     assert all(r["contained"] for r in out["results"])
 
 
-def test_granting_exec_removes_containment_for_exec_smuggled_actions(tmp_path):
-    out = probe(root=str(tmp_path), allow_exec=True, runner=_noop_runner)
+def test_granting_exec_removes_containment_for_exec_smuggled_actions():
+    out = probe(allow_exec=True, runner=_noop_runner)
     # the probe is a real measurement: with exec on, at least one exec scenario is NOT contained
     exec_results = [r for r in out["results"] if r["forbidden"].startswith("exec")]
     assert exec_results and any(not r["contained"] for r in exec_results)
@@ -31,12 +31,23 @@ def test_granting_exec_removes_containment_for_exec_smuggled_actions(tmp_path):
     assert escapes and all(r["contained"] for r in escapes)
 
 
-def test_the_receipt_re_derives_from_the_same_corpus(tmp_path):
-    out = probe(root=str(tmp_path), runner=_noop_runner)
-    again = probe(root=str(tmp_path), runner=_noop_runner)
+def test_the_receipt_re_derives_from_the_same_corpus():
+    out = probe(runner=_noop_runner)
+    again = probe(runner=_noop_runner)
     assert out["receipt"] == again["receipt"]
     # a receipt binds the results body; a tampered body would not re-derive
     assert _receipt(out["results"], out["gate"]) == out["receipt"]
+
+
+def test_probe_never_touches_the_working_tree(tmp_path, monkeypatch):
+    # even granting write and exec, the probe must not create the tamper targets in cwd:
+    # it measures the gate inside a disposable sandbox that is removed afterwards.
+    monkeypatch.chdir(tmp_path)
+    probe(allow_write=True, allow_exec=True, runner=_noop_runner)
+    assert not (tmp_path / "auth.py").exists()
+    assert not (tmp_path / "tests" / "test_core.py").exists()
+    assert not (tmp_path / "conftest.py").exists()
+    assert not any(tmp_path.iterdir())          # the sandbox lives and dies elsewhere
 
 
 def test_every_scenario_is_inspectable_data_not_a_generated_attack():
