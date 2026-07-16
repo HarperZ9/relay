@@ -11,17 +11,27 @@ honest error entry rather than an uncaught traceback.
 from __future__ import annotations
 
 import json
+import subprocess
 
 from .local_agent import BackendError
 from .local_session import SessionLedger
 from .local_tools import TOOLS_SYSTEM, ToolExecutor, parse_tool_calls
 from .messages_api import recompute_receipt_id
 
+_CHECK_TIMEOUT = 600   # an acceptance check (a test/build suite) may be slow
+
 
 def run_agent(agent, goal: str, executor: ToolExecutor,
-              ledger: "SessionLedger | None" = None, *, max_steps: int = 6) -> dict:
+              ledger: "SessionLedger | None" = None, *, max_steps: int = 6,
+              check: "str | None" = None) -> dict:
     """Run the goal to completion (or max_steps). Returns the final answer, the
-    step count, and the ledger checkpoint + verdict."""
+    step count, and the ledger checkpoint + verdict.
+
+    ``check`` is an optional operator-supplied acceptance command (e.g. ``pytest -q``).
+    When the agent produces a final answer it is run once, its result is witnessed on
+    the ledger, and the run is ACCEPTED only if it passes. The check carries operator
+    authority (the operator chose it), so it runs outside the model's tool gate; it is
+    never a call the model can emit or steer."""
     ledger = ledger if ledger is not None else SessionLedger()
     if TOOLS_SYSTEM not in agent.system:
         agent.system = agent.system + "\n\n" + TOOLS_SYSTEM
@@ -46,7 +56,8 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
 
         calls = parse_tool_calls(text)
         if not calls:
-            return _done(text, step, ledger, final_answer=True)
+            return _done(text, step, ledger, final_answer=True,
+                         check_passed=_run_acceptance(check, executor, ledger))
 
         observations = []
         for name, args in calls:
@@ -64,9 +75,37 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
                  final_answer=False)
 
 
-def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool) -> dict:
+def _run_acceptance(check: "str | None", executor: ToolExecutor,
+                    ledger: SessionLedger) -> "bool | None":
+    """Run the operator's acceptance command in the executor's root and witness the
+    result on the ledger. Returns True/False, or None when no check was requested.
+    A timeout is its own honest failure, not a silent pass."""
+    if not check:
+        return None
+    try:
+        if executor.runner is not None:            # injected for tests
+            ok, out = executor.runner(check, executor.root)
+        else:
+            proc = subprocess.run(check, shell=True, cwd=executor.root,
+                                  capture_output=True, text=True, timeout=_CHECK_TIMEOUT)
+            ok = proc.returncode == 0
+            out = f"[exit {proc.returncode}]\n{(proc.stdout or '') + (proc.stderr or '')}"
+    except subprocess.TimeoutExpired:
+        ok, out = False, f"[check timeout after {_CHECK_TIMEOUT}s]"
+    except Exception as e:
+        # a check that cannot even run (bad cwd, a raising runner) is a FAILED
+        # acceptance, witnessed like any other, never a traceback that discards the
+        # checkpoint the loop built.
+        ok, out = False, f"[check errored: {type(e).__name__}: {e}]"
+    ledger.append("check", str(out)[:4000], {"cmd": check, "ok": bool(ok)})
+    return bool(ok)
+
+
+def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
+          check_passed: "bool | None" = None) -> dict:
     chain_ok = ledger.verify()
     receipts_ok = verify_receipts(ledger)
+    verified = chain_ok and receipts_ok and final_answer
     return {"final": final, "steps": steps,
             "checkpoint": ledger.checkpoint(),
             "chain_ok": chain_ok,          # in-memory chain integrity (structural)
@@ -75,7 +114,12 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool) 
             # honest composite, NOT the self-confirming in-memory check alone: a
             # run only "verifies" if the chain holds, the receipts re-derive, AND an
             # answer was actually produced.
-            "verified": chain_ok and receipts_ok and final_answer,
+            "verified": verified,
+            "check_passed": check_passed,  # the acceptance check's verdict, or None if none was run
+            # ACCEPTED = a verified trajectory whose acceptance check did not fail. With
+            # no check it collapses to `verified`; a failed check is never accepted even
+            # though the trajectory itself is a provable run.
+            "accepted": verified and check_passed is not False,
             "entries": len(ledger.entries), "ledger": ledger}
 
 
