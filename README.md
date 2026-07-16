@@ -34,7 +34,7 @@ A missing credential just drops that tier from the ladder.
 
 ## An actual coding agent, not a chat box
 
-`--agent` runs a gated tool loop the model drives:
+`--agent` runs a permission-checked tool loop the model drives:
 
 - **`repo_map`**: a compact code outline (Python via `ast`; JS/TS/Go/Rust/Java/
   C#/Swift/PHP/Ruby via patterns) so the model finds the right file.
@@ -45,7 +45,7 @@ A missing credential just drops that tier from the ladder.
 - **`run`**: off by default; enabled with `--allow-exec`. A shell can write, so
   `--allow-exec` implies write, and unlike the file tools `run` is not confined to
   `--root` (it sets only the working directory). A denylist refuses a few literal
-  destructive spellings — a guardrail against a small model wrecking the tree, not
+  destructive spellings: a guardrail against a small model wrecking the tree, not
   a security boundary.
 
 ## The wedge: a provable run
@@ -54,7 +54,7 @@ Every turn, tool call, and result is appended to a **hash-chained session
 ledger**. A saved run is tamper-evident: reload it and `verify()` re-derives the
 chain (a broken chain is refused, not loaded). With `--auto-commit`, relay stages
 only the files the ledger recorded as edits and carries the checkpoint in the
-message, so the commit binds the witnessed edit set — unrelated or shell-written
+message, so the commit binds the witnessed edit set; unrelated or shell-written
 working-tree changes are left out, never attributed to the run. Each model turn
 also carries a content-addressed receipt whose id a stranger can re-derive from
 the saved record. No other coding agent gives you a run you can *prove*, not just
@@ -63,7 +63,7 @@ read.
 ## Prove it works, not just that it ran
 
 A witnessed trajectory proves *what* the agent did. It does not prove the edits are
-*correct* — a model can finish confidently and leave a broken tree. Pass `--check`
+*correct*: a model can finish confidently and leave a broken tree. Pass `--check`
 and relay closes that gap: after the agent finishes, it runs your acceptance command
 once, witnesses the result on the ledger, and **accepts** the run only if it passes.
 
@@ -75,7 +75,7 @@ relay --agent "fix the failing test in paginate()" --root . --allow-write \
 The check carries *your* authority, not the model's: it runs outside the tool gate
 and is never a call the model can emit or steer. A failed check means the run is not
 accepted, `--auto-commit` is skipped (a broken tree is never committed on your
-behalf), and the exit code is non-zero — so `--agent --check` is a CI gate over the
+behalf), and the exit code is non-zero, so `--agent --check` works as a CI check over the
 agent's own work. `accepted` = a provable trajectory whose acceptance check held.
 
 And the pass has to be *earned*. A rule-based reward-hacking guard reads the
@@ -85,7 +85,7 @@ the run is not accepted. A gamed green is never committed. The flags ship with t
 run under their own hash, re-checkable; the guard is non-learned and only ever turns
 an accept into a refusal, never the reverse.
 
-## Prove the gate holds (prompt-injection robustness)
+## Prove the boundary holds (prompt-injection robustness)
 
 Third-party data an agent reads (a file, a webpage, a tool result) can carry an
 instruction that tries to make it exfiltrate, overwrite, or escape. relay's defense
@@ -139,7 +139,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## What this believes
 
-This tool is one lane of a family that holds a single belief steady across
+This tool is one part of a family that holds a single belief steady across
 every surface: knowledge open to anyone who can attain the means; acceptance
 decided by external checks, never reputation; every result re-runnable;
 honest nulls first-class; ownership earned by comprehension; learning woven
