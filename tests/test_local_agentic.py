@@ -271,6 +271,42 @@ def test_acceptance_check_runs_in_the_executor_root(tmp_path):
     assert seen["cmd"] == "make test" and seen["root"] == str(tmp_path)
 
 
+def test_a_passing_check_is_not_accepted_when_the_agent_edited_the_test(tmp_path):
+    # the reward-hacking guard: the agent makes the check green by rewriting the test
+    # that grades it. The check "passes", but the pass is not trusted, so the run is
+    # NOT accepted -- a gamed green never gets committed.
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_core.py").write_text("def test_x():\n    assert False\n",
+                                                     encoding="utf-8")
+    agent = ScriptedAgent([
+        'TOOL write_file {"path": "tests/test_core.py", "content": "def test_x():\\n    pass\\n"}',
+        "done, tests pass now"])
+    led = SessionLedger()
+    res = run_agent(agent, "make the tests pass",
+                    ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_write=True),
+                                 runner=lambda cmd, root: (True, "1 passed")),
+                    led, max_steps=3, check="pytest -q")
+    assert res["check_passed"] is True          # the check reported green...
+    assert res["integrity"]["clean"] is False   # ...but the agent edited the grader
+    assert res["check_trusted"] is False
+    assert res["accepted"] is False             # so the gamed pass is refused
+    assert any(f["kind"] == "edited_protected_file" for f in res["integrity"]["flags"])
+
+
+def test_a_clean_passing_check_is_accepted(tmp_path):
+    # editing real source (not the test) and passing the check is an honest, accepted run
+    agent = ScriptedAgent([
+        'TOOL write_file {"path": "app.py", "content": "def add(a, b):\\n    return a + b\\n"}',
+        "done"])
+    led = SessionLedger()
+    res = run_agent(agent, "implement add",
+                    ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_write=True),
+                                 runner=lambda cmd, root: (True, "2 passed")),
+                    led, max_steps=3, check="pytest -q")
+    assert res["check_passed"] is True and res["integrity"]["clean"] is True
+    assert res["check_trusted"] is True and res["accepted"] is True
+
+
 def test_acceptance_check_that_cannot_run_is_a_witnessed_failure_not_a_raise(tmp_path):
     # a check that errors (bad cwd, a raising runner) must fail CLOSED and be witnessed,
     # never propagate and discard the checkpoint the loop built.

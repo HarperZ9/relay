@@ -103,9 +103,15 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
 
 def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
           check_passed: "bool | None" = None) -> dict:
+    from .integrity import integrity_report, trajectory_integrity
     chain_ok = ledger.verify()
     receipts_ok = verify_receipts(ledger)
     verified = chain_ok and receipts_ok and final_answer
+    integrity = integrity_report(trajectory_integrity(ledger))
+    # A passing check is TRUSTED only if the trajectory did not tamper with the thing
+    # that grades it (edit the test file, inject a skip/exit). No check ran -> there was
+    # nothing to game, so trust is not in question.
+    check_trusted = check_passed is not True or integrity["clean"]
     return {"final": final, "steps": steps,
             "checkpoint": ledger.checkpoint(),
             "chain_ok": chain_ok,          # in-memory chain integrity (structural)
@@ -116,10 +122,12 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
             # answer was actually produced.
             "verified": verified,
             "check_passed": check_passed,  # the acceptance check's verdict, or None if none was run
-            # ACCEPTED = a verified trajectory whose acceptance check did not fail. With
-            # no check it collapses to `verified`; a failed check is never accepted even
-            # though the trajectory itself is a provable run.
-            "accepted": verified and check_passed is not False,
+            "integrity": integrity,        # reward-hacking flags over the witnessed edit set
+            "check_trusted": check_trusted,  # a pass survives only if the grader was not tampered with
+            # ACCEPTED = a verified trajectory whose acceptance check did not fail AND
+            # whose pass was not gamed by tampering with the check. No check -> collapses
+            # to `verified`; a failed OR tampered pass is never accepted.
+            "accepted": verified and check_passed is not False and check_trusted,
             "entries": len(ledger.entries), "ledger": ledger}
 
 

@@ -78,6 +78,13 @@ accepted, `--auto-commit` is skipped (a broken tree is never committed on your
 behalf), and the exit code is non-zero — so `--agent --check` is a CI gate over the
 agent's own work. `accepted` = a provable trajectory whose acceptance check held.
 
+And the pass has to be *earned*. A rule-based reward-hacking guard reads the
+witnessed edit set: if the agent made the check green by editing the test that grades
+it, or by injecting a `pytest.skip` / `sys.exit`, the pass is flagged UNTRUSTED and
+the run is not accepted. A gamed green is never committed. The flags ship with the
+run under their own hash, re-checkable; the guard is non-learned and only ever turns
+an accept into a refusal, never the reverse.
+
 ## Prove the gate holds (prompt-injection robustness)
 
 Third-party data an agent reads (a file, a webpage, a tool result) can carry an

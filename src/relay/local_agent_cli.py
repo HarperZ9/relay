@@ -123,8 +123,11 @@ def _run_agentic(args) -> int:
         else:
             committed = " | not committed (run not accepted)"
     chk = "" if result["check_passed"] is None else f" | check={'pass' if result['check_passed'] else 'FAIL'}"
+    # a green check that was gamed by editing the grader is called out, not hidden
+    tamper = "" if result.get("check_trusted", True) else \
+        f" | check UNTRUSTED ({result['integrity']['flag_count']} integrity flag(s))"
     print(f"\n[agent | {result['steps']} step(s) | {result['entries']} ledger entries | "
-          f"verified={result['verified']} | accepted={result['accepted']}{chk} | "
+          f"verified={result['verified']} | accepted={result['accepted']}{chk}{tamper} | "
           f"checkpoint {result['checkpoint'][:16]}"
           f"{' | saved ' + args.save if args.save else ''}{committed}]", file=sys.stderr)
     # exit 0 iff the run was ACCEPTED (finished, verified, and any requested check
