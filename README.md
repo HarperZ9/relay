@@ -60,6 +60,24 @@ also carries a content-addressed receipt whose id a stranger can re-derive from
 the saved record. No other coding agent gives you a run you can *prove*, not just
 read.
 
+## Prove it works, not just that it ran
+
+A witnessed trajectory proves *what* the agent did. It does not prove the edits are
+*correct* — a model can finish confidently and leave a broken tree. Pass `--check`
+and relay closes that gap: after the agent finishes, it runs your acceptance command
+once, witnesses the result on the ledger, and **accepts** the run only if it passes.
+
+```bash
+relay --agent "fix the failing test in paginate()" --root . --allow-write \
+      --check "pytest -q" --auto-commit
+```
+
+The check carries *your* authority, not the model's: it runs outside the tool gate
+and is never a call the model can emit or steer. A failed check means the run is not
+accepted, `--auto-commit` is skipped (a broken tree is never committed on your
+behalf), and the exit code is non-zero — so `--agent --check` is a CI gate over the
+agent's own work. `accepted` = a provable trajectory whose acceptance check held.
+
 ## Prove the gate holds (prompt-injection robustness)
 
 Third-party data an agent reads (a file, a webpage, a tool result) can carry an

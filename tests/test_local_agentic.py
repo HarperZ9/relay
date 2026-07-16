@@ -220,6 +220,120 @@ def test_loop_stops_at_max_steps_and_reports_an_honest_verdict(tmp_path):
     assert res["verified"] is False         # so the composite is not a vacuous True
 
 
+def test_acceptance_check_passes_is_witnessed_and_accepted(tmp_path):
+    # the agent finishes; an operator-supplied check runs, passes, and is recorded on
+    # the ledger. A run is ACCEPTED only when the trajectory verifies AND the check holds.
+    agent = ScriptedAgent(['TOOL write_file {"path": "x.txt", "content": "hi"}', "done"])
+    led = SessionLedger()
+    res = run_agent(agent, "write x.txt",
+                    ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_write=True),
+                                 runner=lambda cmd, root: (True, "3 passed")),
+                    led, max_steps=3, check="pytest -q")
+    assert res["check_passed"] is True
+    assert res["verified"] is True and res["accepted"] is True
+    chk = next(e for e in led.entries if e.kind == "check")   # the check is on the record
+    assert chk.meta["cmd"] == "pytest -q" and chk.meta["ok"] is True
+    assert "3 passed" in chk.content
+
+
+def test_failing_acceptance_check_blocks_acceptance_even_when_verified(tmp_path):
+    agent = ScriptedAgent(['TOOL write_file {"path": "x.txt", "content": "bug"}', "done"])
+    led = SessionLedger()
+    res = run_agent(agent, "write x.txt",
+                    ToolExecutor(root=str(tmp_path), gate=ToolGate(allow_write=True),
+                                 runner=lambda cmd, root: (False, "1 failed")),
+                    led, max_steps=3, check="pytest -q")
+    assert res["verified"] is True          # the trajectory itself is a provable run
+    assert res["check_passed"] is False
+    assert res["accepted"] is False         # but a failed check is not accepted
+    chk = next(e for e in led.entries if e.kind == "check")
+    assert chk.meta["ok"] is False
+
+
+def test_no_check_means_accepted_equals_verified(tmp_path):
+    agent = ScriptedAgent(["done"])
+    led = SessionLedger()
+    res = run_agent(agent, "just answer", ToolExecutor(root=str(tmp_path)), led, max_steps=2)
+    assert res["check_passed"] is None
+    assert res["accepted"] == res["verified"]
+    assert not any(e.kind == "check" for e in led.entries)
+
+
+def test_acceptance_check_runs_in_the_executor_root(tmp_path):
+    seen = {}
+    def runner(cmd, root):
+        seen["cmd"], seen["root"] = cmd, root
+        return True, "ok"
+    agent = ScriptedAgent(["done"])
+    run_agent(agent, "answer",
+              ToolExecutor(root=str(tmp_path), runner=runner),
+              SessionLedger(), max_steps=2, check="make test")
+    assert seen["cmd"] == "make test" and seen["root"] == str(tmp_path)
+
+
+def test_acceptance_check_that_cannot_run_is_a_witnessed_failure_not_a_raise(tmp_path):
+    # a check that errors (bad cwd, a raising runner) must fail CLOSED and be witnessed,
+    # never propagate and discard the checkpoint the loop built.
+    def boom(cmd, root):
+        raise NotADirectoryError("no such working directory")
+    agent = ScriptedAgent(["done"])
+    led = SessionLedger()
+    res = run_agent(agent, "answer", ToolExecutor(root=str(tmp_path), runner=boom),
+                    led, max_steps=2, check="pytest -q")
+    assert res["check_passed"] is False and res["accepted"] is False
+    chk = next(e for e in led.entries if e.kind == "check")
+    assert chk.meta["ok"] is False and "errored" in chk.content
+    assert res["checkpoint"] == led.checkpoint()      # the run is still witnessed
+
+
+def test_cli_does_not_pass_or_commit_a_run_that_never_finished(tmp_path, monkeypatch):
+    # the fail-open the review caught: a --check run that hits max_steps / backend death
+    # has check_passed None (the check never ran). It must NOT auto-commit and must exit
+    # non-zero — gating is on `accepted`, not merely on "the check didn't fail".
+    from relay import local_agent_cli as cli
+
+    class _Live:
+        def live_backend(self):
+            return object()
+    monkeypatch.setattr(cli, "_build_agent", lambda args: _Live())
+    monkeypatch.setattr(cli, "run_agent",
+                        lambda *a, **k: {"final": "[max_steps]", "steps": 3, "entries": 5,
+                                         "checkpoint": "c" * 32, "verified": False,
+                                         "accepted": False, "check_passed": None})
+    called = {"commit": False}
+    monkeypatch.setattr(cli, "commit_run",
+                        lambda *a, **k: (called.update(commit=True), {"committed": True, "sha": "x"})[1])
+    rc = cli.main([str(tmp_path / "p"), "--agent", "--auto-commit",
+                   "--check", "pytest -q", "--root", str(tmp_path)])
+    assert rc == 1                       # an unfinished run is not success
+    assert called["commit"] is False     # its partial, unchecked edits are not committed
+
+
+def test_cli_skips_commit_and_exits_nonzero_when_the_check_fails(tmp_path, monkeypatch):
+    # the CLI must never auto-commit a run whose acceptance check failed, and must
+    # exit non-zero so it works as a CI gate over the agent's own edits.
+    from relay import local_agent_cli as cli
+
+    class _Live:
+        def live_backend(self):
+            return object()
+    monkeypatch.setattr(cli, "_build_agent", lambda args: _Live())
+    monkeypatch.setattr(cli, "run_agent",
+                        lambda *a, **k: {"final": "done", "steps": 1, "entries": 3,
+                                         "checkpoint": "c" * 32, "verified": True,
+                                         "accepted": False, "check_passed": False})
+    called = {"commit": False}
+    def _no_commit(*a, **k):
+        called["commit"] = True
+        return {"committed": True, "sha": "deadbeef"}
+    monkeypatch.setattr(cli, "commit_run", _no_commit)
+
+    rc = cli.main([str(tmp_path / "x"), "--agent", "--auto-commit",
+                   "--check", "pytest -q", "--root", str(tmp_path)])
+    assert rc == 1                       # failed check -> non-zero exit (CI gate)
+    assert called["commit"] is False     # and the broken tree was never committed
+
+
 def test_tools_system_prompt_is_installed_once():
     from relay.local_tools import TOOLS_SYSTEM
     agent = ScriptedAgent(["done", "done again"])

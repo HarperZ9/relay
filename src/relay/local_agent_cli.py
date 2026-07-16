@@ -105,22 +105,32 @@ def _run_agentic(args) -> int:
                             gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
     ledger = SessionLedger()
     result = run_agent(agent, _context_preamble(args.file) + args.prompt, executor, ledger,
-                       max_steps=args.max_steps)
+                       max_steps=args.max_steps, check=args.check or None)
     print(result["final"])
     if args.save:
         ledger.save(args.save)
     committed = ""
     if args.auto_commit:
-        # stage only the files the ledger witnessed as edits, so the commit binds
-        # the trajectory rather than any other change in the working tree.
-        c = commit_run(args.root, args.prompt, result["checkpoint"],
-                       paths=witnessed_edit_paths(ledger))
-        committed = (f" | committed {c['sha']}" if c.get("committed")
-                     else f" | not committed ({c.get('reason')})")
+        if result["accepted"]:
+            # stage only the files the ledger witnessed as edits, so the commit binds
+            # the trajectory rather than any other change in the working tree. Only an
+            # ACCEPTED run is committed: a failed check, an unfinished run (max_steps),
+            # or a backend death all leave the tree uncommitted on the operator's behalf.
+            c = commit_run(args.root, args.prompt, result["checkpoint"],
+                           paths=witnessed_edit_paths(ledger))
+            committed = (f" | committed {c['sha']}" if c.get("committed")
+                         else f" | not committed ({c.get('reason')})")
+        else:
+            committed = " | not committed (run not accepted)"
+    chk = "" if result["check_passed"] is None else f" | check={'pass' if result['check_passed'] else 'FAIL'}"
     print(f"\n[agent | {result['steps']} step(s) | {result['entries']} ledger entries | "
-          f"verified={result['verified']} | checkpoint {result['checkpoint'][:16]}"
+          f"verified={result['verified']} | accepted={result['accepted']}{chk} | "
+          f"checkpoint {result['checkpoint'][:16]}"
           f"{' | saved ' + args.save if args.save else ''}{committed}]", file=sys.stderr)
-    return 0
+    # exit 0 iff the run was ACCEPTED (finished, verified, and any requested check
+    # passed), so --agent is a sound CI gate: an unfinished run or one whose check
+    # never ran is never reported as success.
+    return 0 if result["accepted"] else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -148,6 +158,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
+    ap.add_argument("--check", default="",
+                    help="an acceptance command (e.g. \"pytest -q\") run once after the "
+                    "agent finishes; the run is accepted only if it passes, --auto-commit "
+                    "is skipped on failure, and the exit code is non-zero. Witnessed on the "
+                    "ledger. Carries operator authority: runs outside the model's tool gate.")
     ap.add_argument("--save", default="", help="save the session ledger to this JSONL path")
     ap.add_argument("--auto-commit", action="store_true", dest="auto_commit",
                     help="git-commit the changes after an --agent run (existing repo only)")
