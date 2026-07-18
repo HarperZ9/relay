@@ -25,7 +25,7 @@ tiers first so you only spend metered tokens when you have to:
 |---|---|
 | **local** | a served 14B/32B (`serve.py`) → Ollama (largest pulled model) |
 | **plan / max** | the official CLI (`claude`, `codex`) using your subscription auth |
-| **api** | `codex` / `claude` / `gemini` / `deepseek` public APIs + `<PROVIDER>_API_KEY` |
+| **api** | `codex` / `claude` / `glm` / `gemini` / `deepseek` public APIs + `<PROVIDER>_API_KEY` |
 | **provider** | a gateway (OpenRouter, ...) via `<PROVIDER>_PROVIDER_BASE_URL` |
 | **cloud** | a cloud OpenAI-compatible endpoint via `<PROVIDER>_CLOUD_BASE_URL` + `_CLOUD_KEY` |
 
