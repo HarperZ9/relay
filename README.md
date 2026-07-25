@@ -50,6 +50,21 @@ A missing credential just drops that tier from the ladder.
   destructive spellings: a guardrail against a small model wrecking the tree, not
   a security boundary.
 
+## Architect mode: plan with one model, implement with another
+
+```bash
+relay --agent "add rate limiting to fetch()" --root . --allow-write \
+      --architect claude-plan --online --check "pytest -q"
+```
+
+A planning turn runs first, on whichever backend you name (any tier relay
+already reaches — local, subscription, or API, not just a matched pair of named
+frontier models), and its plan is folded into the implementer's goal as a
+proposal, attributed to the backend that made it. The implementer still reads
+the real code and may deviate if the plan turns out to be wrong; it is context,
+never a replacement for the implementer's own tool use. Bare `--architect` uses
+whichever backend is first healthy.
+
 ## The wedge: a provable run
 
 Every turn, tool call, and result is appended to a **hash-chained session
