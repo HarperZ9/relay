@@ -20,10 +20,12 @@ from .local_agent import (
     available_backends,
     health_report,
 )
+from .conventions import with_conventions
 from .local_git import commit_run
 from .local_loop import run_agent, witnessed_edit_paths
 from .local_session import SessionLedger
 from .local_tools import ToolExecutor, ToolGate
+from .watch import DEFAULT_MARKER, run_watch_once
 
 
 def _all_backends(args) -> list:
@@ -93,11 +95,20 @@ def _repl(agent: LocalAgent, as_json: bool) -> int:
             print(f"[error] {e}", file=sys.stderr)
 
 
+def _coding_agent(args) -> LocalAgent:
+    """`_build_agent`, plus the project's own conventions folded into the system
+    prompt (AGENTS.md/CONVENTIONS.md at --root) unless --no-conventions."""
+    agent = _build_agent(args)
+    if not getattr(args, "no_conventions", False) and hasattr(agent, "system"):
+        agent.system = with_conventions(agent.system, args.root)
+    return agent
+
+
 def _run_agentic(args) -> int:
     if not args.prompt:
         print("[error] --agent needs a task prompt", file=sys.stderr)
         return 2
-    agent = _build_agent(args)
+    agent = _coding_agent(args)
     if agent.live_backend() is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
         return 1
@@ -144,6 +155,29 @@ def _run_agentic(args) -> int:
     return 0 if result["accepted"] else 1
 
 
+def _run_watch(args) -> int:
+    import time
+
+    agent = _coding_agent(args)
+    if agent.live_backend() is None:
+        print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
+        return 1
+    # watch mode's whole point is applying the fix in place; exec stays opt-in.
+    executor = ToolExecutor(root=args.root, gate=ToolGate(allow_write=True, allow_exec=args.allow_exec))
+    print(f"[watch] polling {args.root} every {args.watch_interval}s for '{args.watch_marker}' "
+          f"comments (Ctrl-C to stop)", file=sys.stderr)
+    try:
+        while True:
+            for r in run_watch_once(agent, executor, marker=args.watch_marker,
+                                    max_steps=args.max_steps):
+                print(f"[watch] {r['path']}:{r['line']} \"{r['instruction']}\" -> {r['final']} "
+                      f"(verified={r['verified']}, checkpoint {r['checkpoint'][:16]})")
+            time.sleep(args.watch_interval)
+    except KeyboardInterrupt:
+        print("\n[watch] stopped", file=sys.stderr)
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="relay", description=__doc__)
     ap.add_argument("prompt", nargs="?", help="one-shot prompt; omit for a REPL")
@@ -187,6 +221,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="run the defensive prompt-injection robustness probe over the gated tool "
                          "loop and report containment (honors --allow-write/--allow-exec; runs in a "
                          "disposable sandbox, so it never touches the working tree)")
+    ap.add_argument("--watch", action="store_true",
+                    help="poll --root for a marker comment (default 'RELAY:') in any file, in any "
+                         "editor, and act on each as its own witnessed run; the model removes the "
+                         "marker itself once done. Implies write access. Ctrl-C to stop.")
+    ap.add_argument("--watch-marker", default=DEFAULT_MARKER, dest="watch_marker")
+    ap.add_argument("--watch-interval", type=float, default=2.0, dest="watch_interval")
+    ap.add_argument("--no-conventions", action="store_true", dest="no_conventions",
+                    help="skip auto-including a project AGENTS.md/CONVENTIONS.md in the system "
+                         "prompt (--agent/--watch only)")
     args = ap.parse_args(argv)
 
     if args.probe_injection:
@@ -197,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.mcp:
         from .local_mcp import serve
         return serve()
+    if args.watch:
+        return _run_watch(args)
     if args.agent:
         return _run_agentic(args)
     if args.health:
