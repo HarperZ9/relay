@@ -96,11 +96,17 @@ def _repl(agent: LocalAgent, as_json: bool) -> int:
 
 
 def _coding_agent(args) -> LocalAgent:
-    """`_build_agent`, plus the project's own conventions folded into the system
-    prompt (AGENTS.md/CONVENTIONS.md at --root) unless --no-conventions."""
+    """Build the coding agent with optional project conventions and repo map."""
     agent = _build_agent(args)
-    if not getattr(args, "no_conventions", False) and hasattr(agent, "system"):
+    if not hasattr(agent, "system"):
+        return agent
+
+    if not getattr(args, "no_conventions", False):
         agent.system = with_conventions(agent.system, args.root)
+    if not getattr(args, "no_repo_map", False):
+        from .local_repomap import build_repo_map
+        agent.system = (f"{agent.system}\n\nRepo map ({args.root}):\n"
+                        f"{build_repo_map(args.root, max_files=20, max_symbols=15)}")
     return agent
 
 
@@ -204,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined")
+    ap.add_argument("--no-repo-map", action="store_true", dest="no_repo_map",
+                    help="skip auto-folding a bounded repo map (--root) into the system prompt "
+                    "(--agent/--watch only); the model can still call the repo_map tool itself")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
     ap.add_argument("--check", default="",
                     help="an acceptance command (e.g. \"pytest -q\") run once after the "
