@@ -22,3 +22,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Local-only Claude instructions (global standard: never commit)
+CLAUDE.local.md
