@@ -20,6 +20,8 @@ from .local_agent import (
     available_backends,
     health_report,
 )
+from .architect import plan as architect_plan
+from .architect import with_plan
 from .local_git import commit_run
 from .local_loop import run_agent, witnessed_edit_paths
 from .local_session import SessionLedger
@@ -101,10 +103,19 @@ def _run_agentic(args) -> int:
     if agent.live_backend() is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
         return 1
+    goal = _context_preamble(args.file) + args.prompt
+    if args.architect_backend:
+        planner = LocalAgent(backends=_all_backends(args), prefer=args.architect_backend,
+                             max_tokens=args.max_tokens, temperature=args.temperature, seed=args.seed)
+        if planner.live_backend() is None:
+            print(f"[error] --architect backend {args.architect_backend!r} is not healthy",
+                  file=sys.stderr)
+            return 1
+        goal = with_plan(goal, architect_plan(planner, goal))
     executor = ToolExecutor(root=args.root,
                             gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
     ledger = SessionLedger()
-    result = run_agent(agent, _context_preamble(args.file) + args.prompt, executor, ledger,
+    result = run_agent(agent, goal, executor, ledger,
                        max_steps=args.max_steps, check=args.check or None)
     print(result["final"])
     if args.save:
@@ -174,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
                     "agent finishes; the run is accepted only if it passes, --auto-commit "
                     "is skipped on failure, and the exit code is non-zero. Witnessed on the "
                     "ledger. Carries operator authority: runs outside the model's tool gate.")
+    ap.add_argument("--architect", nargs="?", const="auto", default=None, dest="architect_backend",
+                    help="plan with one backend, implement with another (--backend/--model): a "
+                    "planning turn on the named backend (e.g. \"claude-plan\" with --online) is "
+                    "folded into the goal before the (usually cheaper/local) implementer runs. "
+                    "Bare --architect uses whichever backend is first healthy.")
     ap.add_argument("--save", default="", help="save the session ledger to this JSONL path")
     ap.add_argument("--auto-commit", action="store_true", dest="auto_commit",
                     help="git-commit the changes after an --agent run (existing repo only)")
