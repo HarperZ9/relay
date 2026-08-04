@@ -93,11 +93,25 @@ def _repl(agent: LocalAgent, as_json: bool) -> int:
             print(f"[error] {e}", file=sys.stderr)
 
 
+def _coding_agent(args) -> LocalAgent:
+    """`_build_agent`, plus a bounded repo map folded into the system prompt
+    ambiently (--root, --agent/--watch only) unless --no-repo-map: the model
+    starts with the codebase's shape instead of spending its first turn asking
+    for it. It can still call the `repo_map` tool itself for more, or a
+    subdirectory — this is a head start, not a replacement."""
+    agent = _build_agent(args)
+    if not getattr(args, "no_repo_map", False) and hasattr(agent, "system"):
+        from .local_repomap import build_repo_map
+        agent.system = (f"{agent.system}\n\nRepo map ({args.root}):\n"
+                        f"{build_repo_map(args.root, max_files=20, max_symbols=15)}")
+    return agent
+
+
 def _run_agentic(args) -> int:
     if not args.prompt:
         print("[error] --agent needs a task prompt", file=sys.stderr)
         return 2
-    agent = _build_agent(args)
+    agent = _coding_agent(args)
     if agent.live_backend() is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
         return 1
@@ -168,6 +182,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined")
+    ap.add_argument("--no-repo-map", action="store_true", dest="no_repo_map",
+                    help="skip auto-folding a bounded repo map (--root) into the system prompt "
+                    "(--agent/--watch only); the model can still call the repo_map tool itself")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
     ap.add_argument("--check", default="",
                     help="an acceptance command (e.g. \"pytest -q\") run once after the "
