@@ -23,15 +23,20 @@ _CHECK_TIMEOUT = 600   # an acceptance check (a test/build suite) may be slow
 
 def run_agent(agent, goal: str, executor: ToolExecutor,
               ledger: "SessionLedger | None" = None, *, max_steps: int = 6,
-              check: "str | None" = None) -> dict:
+              check: "str | None" = None, test_cmd: "str | None" = None) -> dict:
     """Run the goal to completion (or max_steps). Returns the final answer, the
     step count, and the ledger checkpoint + verdict.
 
-    ``check`` is an optional operator-supplied acceptance command (e.g. ``pytest -q``).
-    When the agent produces a final answer it is run once, its result is witnessed on
-    the ledger, and the run is ACCEPTED only if it passes. The check carries operator
-    authority (the operator chose it), so it runs outside the model's tool gate; it is
-    never a call the model can emit or steer."""
+    ``check`` is an operator-supplied acceptance command (e.g. ``pytest -q``) run
+    ONCE when the agent produces a final answer; the run is ACCEPTED only if it
+    passes. It carries operator authority (the operator chose it), so it runs
+    outside the model's tool gate; it is never a call the model can emit or steer.
+
+    ``test_cmd`` is the same idea as a REPAIR LOOP: when the model believes it is
+    done, the command runs and, if it fails, the failure is fed back and the model
+    keeps working until it passes (or steps run out) — a provable "made the tests
+    green". It shares ``check``'s rich verdict (verified/accepted/integrity/review),
+    so both surfaces report the same way; pass at most one of the two."""
     ledger = ledger if ledger is not None else SessionLedger()
     if TOOLS_SYSTEM not in agent.system:
         agent.system = agent.system + "\n\n" + TOOLS_SYSTEM
@@ -56,6 +61,18 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
 
         calls = parse_tool_calls(text)
         if not calls:
+            if test_cmd:
+                res = executor.execute("run", {"cmd": test_cmd})
+                ledger.append("tool_call", f"run {json.dumps({'cmd': test_cmd}, sort_keys=True)}")
+                ledger.append("tool_result", res.output, {"tool": "run", "ok": res.ok, "gate": "test"})
+                if res.output.startswith("[gate]"):
+                    return _done(text, step, ledger, final_answer=True, check_passed=False,
+                                 note="test gate set but exec is disabled (pass --allow-exec)")
+                if res.ok:
+                    return _done(text, step, ledger, final_answer=True, check_passed=True)
+                message = (f"The tests still FAIL:\n{res.output}\n\nFix the root cause and "
+                           "continue; do not give a final answer until the tests pass.")
+                continue
             return _done(text, step, ledger, final_answer=True,
                          check_passed=_run_acceptance(check, executor, ledger))
 
@@ -72,7 +89,8 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
         ledger.append("user", message)   # the continuation prompt the model actually sees next
 
     return _done("[max_steps reached without a final answer]", max_steps, ledger,
-                 final_answer=False)
+                 final_answer=False,
+                 check_passed=(False if test_cmd else None))
 
 
 def _run_acceptance(check: "str | None", executor: ToolExecutor,
@@ -102,7 +120,7 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
 
 
 def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
-          check_passed: "bool | None" = None) -> dict:
+          check_passed: "bool | None" = None, note: str = "") -> dict:
     from .integrity import integrity_report, trajectory_integrity
     from .review import risk_review, run_review
     chain_ok = ledger.verify()
@@ -133,7 +151,8 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
             # whose pass was not gamed by tampering with the check. No check -> collapses
             # to `verified`; a failed OR tampered pass is never accepted.
             "accepted": verified and check_passed is not False and check_trusted,
-            "entries": len(ledger.entries), "ledger": ledger}
+            "entries": len(ledger.entries), "ledger": ledger,
+            **({"note": note} if note else {})}
 
 
 def verify_receipts(ledger: SessionLedger) -> bool:

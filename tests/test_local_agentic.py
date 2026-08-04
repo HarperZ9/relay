@@ -446,3 +446,38 @@ def test_witnessed_edit_paths_are_only_the_recorded_write_targets():
     led.append("tool_call", 'run {"cmd": "echo pwned > src/c.py"}')   # shell write: NOT witnessed
     led.append("tool_call", 'read_file {"path": "src/d.py"}')          # a read is not an edit
     assert witnessed_edit_paths(led) == ["src/a.py", "src/b.py"]
+
+
+# ── test-repair loop: the same rich verdict as `check`, but retrying ───────
+
+def test_test_repair_loop_gates_on_passing_tests():
+    # tests fail once, then pass -> the loop keeps going until green
+    calls = {"n": 0}
+
+    def runner(cmd, root):
+        calls["n"] += 1
+        return (calls["n"] >= 2, "FAILED: 1 test" if calls["n"] < 2 else "1 passed")
+    agent = ScriptedAgent(["I think it is fixed", "now really fixed"])
+    ex = ToolExecutor(root=".", gate=ToolGate(allow_exec=True), runner=runner)
+    led = SessionLedger()
+    res = run_agent(agent, "fix the bug", ex, led, max_steps=5, test_cmd="pytest -q")
+    assert res["check_passed"] is True and res["accepted"] is True and calls["n"] == 2
+    gates = [e for e in led.entries if e.meta.get("gate") == "test"]
+    assert len(gates) == 2 and gates[0].meta["ok"] is False and gates[1].meta["ok"] is True
+
+
+def test_test_gate_without_exec_is_reported_not_infinite():
+    agent = ScriptedAgent(["done"])
+    res = run_agent(agent, "x", ToolExecutor(root=".", gate=ToolGate(allow_exec=False)),
+                    SessionLedger(), max_steps=3, test_cmd="pytest")
+    assert res["check_passed"] is False and res["accepted"] is False
+    assert "exec is disabled" in res["note"]
+
+
+def test_test_repair_gives_up_at_max_steps_if_never_green():
+    agent = ScriptedAgent(["done"] * 10)
+    ex = ToolExecutor(root=".", gate=ToolGate(allow_exec=True),
+                      runner=lambda c, r: (False, "still failing"))
+    res = run_agent(agent, "x", ex, SessionLedger(), max_steps=3, test_cmd="pytest")
+    assert res["check_passed"] is False and res["accepted"] is False
+    assert res["final_answer"] is False   # never produced an accepted final answer

@@ -105,7 +105,8 @@ def _run_agentic(args) -> int:
                             gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
     ledger = SessionLedger()
     result = run_agent(agent, _context_preamble(args.file) + args.prompt, executor, ledger,
-                       max_steps=args.max_steps, check=args.check or None)
+                       max_steps=args.max_steps, check=args.check or None,
+                       test_cmd=args.test_cmd or None)
     print(result["final"])
     if args.save:
         ledger.save(args.save)
@@ -126,8 +127,9 @@ def _run_agentic(args) -> int:
     # a green check that was gamed by editing the grader is called out, not hidden
     tamper = "" if result.get("check_trusted", True) else \
         f" | check UNTRUSTED ({result['integrity']['flag_count']} integrity flag(s))"
+    note = f" | {result['note']}" if result.get("note") else ""
     print(f"\n[agent | {result['steps']} step(s) | {result['entries']} ledger entries | "
-          f"verified={result['verified']} | accepted={result['accepted']}{chk}{tamper} | "
+          f"verified={result['verified']} | accepted={result['accepted']}{chk}{tamper}{note} | "
           f"checkpoint {result['checkpoint'][:16]}"
           f"{' | saved ' + args.save if args.save else ''}{committed}]", file=sys.stderr)
     # the reviewability projection: what a reviewer checks first, as facts from the ledger
@@ -174,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
                     "agent finishes; the run is accepted only if it passes, --auto-commit "
                     "is skipped on failure, and the exit code is non-zero. Witnessed on the "
                     "ledger. Carries operator authority: runs outside the model's tool gate.")
+    ap.add_argument("--test-cmd", default="", dest="test_cmd",
+                    help="like --check, but retried: on failure the output is fed back to "
+                    "the model and it keeps working until the command passes or --max-steps "
+                    "runs out (needs --allow-exec). Shares --check's accept/reject reporting; "
+                    "pass at most one of the two.")
     ap.add_argument("--save", default="", help="save the session ledger to this JSONL path")
     ap.add_argument("--auto-commit", action="store_true", dest="auto_commit",
                     help="git-commit the changes after an --agent run (existing repo only)")
