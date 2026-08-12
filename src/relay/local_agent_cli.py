@@ -1,4 +1,4 @@
-"""local_agent_cli.py — CLI/REPL for the standalone local agent (offline tier).
+"""CLI/REPL for the standalone local agent (offline tier).
 
   python -m relay.local_agent_cli --health          # which local tiers are live?
   python -m relay.local_agent_cli "explain this fn" --file foo.py
@@ -68,11 +68,11 @@ def _emit(resp: dict, as_json: bool) -> None:
 
 def _repl(agent: LocalAgent, as_json: bool) -> int:
     live = agent.live_backend()
-    print(f"local-agent REPL — backend: {live.name if live else 'NONE LIVE'} "
+    print(f"local-agent REPL - backend: {live.name if live else 'NONE LIVE'} "
           f"(/health, /reset, /exit)", file=sys.stderr)
     while True:
         try:
-            line = input("» ").strip()
+            line = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
             print(file=sys.stderr)
             return 0
@@ -146,7 +146,8 @@ def _run_agentic(args) -> int:
     return 0 if result["accepted"] else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Build the public command-line parser."""
     ap = argparse.ArgumentParser(prog="relay", description=__doc__)
     ap.add_argument("prompt", nargs="?", help="one-shot prompt; omit for a REPL")
     ap.add_argument("--health", action="store_true", help="report live local tiers and exit")
@@ -155,22 +156,29 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", default="", help="force an Ollama model name")
     ap.add_argument("--file", action="append", default=[], help="inject a file as context (repeatable)")
     ap.add_argument("--system", default="", help="override the system prompt")
-    ap.add_argument("--max-tokens", type=int, default=512, dest="max_tokens")
-    ap.add_argument("--temperature", type=float, default=0.0)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--serve-url", default="http://127.0.0.1:8765", dest="serve_url")
-    ap.add_argument("--ollama-url", default="http://127.0.0.1:11434", dest="ollama_url")
+    ap.add_argument("--max-tokens", type=int, default=512, dest="max_tokens",
+                    help="maximum tokens to generate per response (default: 512)")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="sampling temperature (default: 0.0)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="random seed passed to the backend (default: 0)")
+    ap.add_argument("--serve-url", default="http://127.0.0.1:8765", dest="serve_url",
+                    help="base URL for the local serve.py endpoint")
+    ap.add_argument("--ollama-url", default="http://127.0.0.1:11434", dest="ollama_url",
+                    help="base URL for the Ollama endpoint")
     ap.add_argument("--json", action="store_true", help="print the full response dict")
     # agentic mode
     ap.add_argument("--agent", action="store_true",
                     help="run the prompt as an agentic task with gated tools + a witnessed ledger")
     ap.add_argument("--root", default=".", help="root for file tools read/list/write (--agent); "
                     "note run/exec sets only cwd and is NOT confined to root")
-    ap.add_argument("--allow-write", action="store_true", dest="allow_write")
+    ap.add_argument("--allow-write", action="store_true", dest="allow_write",
+                    help="allow agent file writes inside --root")
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined")
-    ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
+    ap.add_argument("--max-steps", type=int, default=6, dest="max_steps",
+                    help="maximum agent loop steps (default: 6)")
     ap.add_argument("--check", default="",
                     help="an acceptance command (e.g. \"pytest -q\") run once after the "
                     "agent finishes; the run is accepted only if it passes, --auto-commit "
@@ -194,6 +202,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="run the defensive prompt-injection robustness probe over the gated tool "
                          "loop and report containment (honors --allow-write/--allow-exec; runs in a "
                          "disposable sandbox, so it never touches the working tree)")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
 
     if args.probe_injection:
