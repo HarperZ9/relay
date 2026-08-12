@@ -33,7 +33,7 @@ def test_every_public_long_option_has_ascii_help_and_required_descriptions():
 
 
 def test_help_exits_successfully_with_ascii_output(capsys):
-    """The installed CLI help command must remain portable and successful."""
+    """The CLI help handler must remain portable and successful."""
     with pytest.raises(SystemExit) as raised:
         main(["--help"])
 
