@@ -77,6 +77,23 @@ Drop an `AGENTS.md` or `CONVENTIONS.md` at your project root and every `--agent`
 summarized, length-bounded so an oversized file degrades instead of blowing a
 small model's context). `--no-conventions` opts out.
 
+## Ambient repo context
+
+`--agent`/`--watch` fold a bounded repo map into the system prompt automatically
+(`--root`, stopped at 20 files and capped at 4096 UTF-8 bytes so it never grows
+unbounded on a large tree): the model starts with the codebase's shape instead
+of spending its first turn calling `repo_map` to ask for it. It can still call
+`repo_map` itself for more detail or a subdirectory; this is a head start, not a
+replacement. `--no-repo-map` opts out.
+
+This closes a real, verified gap in *what context the model has* (Copilot's
+agent mode does this too). It is not a claim about the small local model's
+tool-use reliability, which is a separate, already-known limitation (see
+Architect mode below) — live runs during development showed high run-to-run
+variance in whether the model actually calls `edit_file` at all, on identical
+input, with and without the ambient map. That variance predates this change and
+is not attributed to it here.
+
 ## The wedge: a provable run
 
 Every turn, tool call, and result is appended to a **hash-chained session

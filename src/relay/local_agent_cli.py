@@ -68,8 +68,17 @@ def _emit(resp: dict, as_json: bool) -> None:
     print(f"\n[{resp.get('backend', '?')} | receipt {rid}]", file=sys.stderr)
 
 
+def _live_backend(agent):
+    live_backend = getattr(agent, "live_backend", None)
+    return live_backend() if callable(live_backend) else None
+
+
+def _has_send(agent) -> bool:
+    return callable(getattr(agent, "send", None))
+
+
 def _repl(agent: LocalAgent, as_json: bool) -> int:
-    live = agent.live_backend()
+    live = _live_backend(agent)
     print(f"local-agent REPL — backend: {live.name if live else 'NONE LIVE'} "
           f"(/health, /reset, /exit)", file=sys.stderr)
     while True:
@@ -96,11 +105,22 @@ def _repl(agent: LocalAgent, as_json: bool) -> int:
 
 
 def _coding_agent(args) -> LocalAgent:
-    """`_build_agent`, plus the project's own conventions folded into the system
-    prompt (AGENTS.md/CONVENTIONS.md at --root) unless --no-conventions."""
+    """Build the coding agent with optional project conventions and repo map."""
     agent = _build_agent(args)
-    if not getattr(args, "no_conventions", False) and hasattr(agent, "system"):
+    if not hasattr(agent, "system"):
+        try:
+            agent.system = ""
+        except AttributeError:
+            return agent
+    elif not isinstance(agent.system, str):
+        agent.system = str(agent.system or "")
+
+    if not getattr(args, "no_conventions", False):
         agent.system = with_conventions(agent.system, args.root)
+    if not getattr(args, "no_repo_map", False):
+        from .local_repomap import build_repo_map
+        agent.system = (f"{agent.system}\n\nRepo map ({args.root}):\n"
+                        f"{build_repo_map(args.root, max_files=20, max_symbols=15)}")
     return agent
 
 
@@ -109,8 +129,11 @@ def _run_agentic(args) -> int:
         print("[error] --agent needs a task prompt", file=sys.stderr)
         return 2
     agent = _coding_agent(args)
-    if agent.live_backend() is None:
+    if _live_backend(agent) is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
+        return 1
+    if not _has_send(agent):
+        print("[error] coding agent is missing send()", file=sys.stderr)
         return 1
     executor = ToolExecutor(root=args.root,
                             gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
@@ -161,8 +184,11 @@ def _run_watch(args) -> int:
     import time
 
     agent = _coding_agent(args)
-    if agent.live_backend() is None:
+    if _live_backend(agent) is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
+        return 1
+    if not _has_send(agent):
+        print("[error] coding agent is missing send()", file=sys.stderr)
         return 1
     # watch mode's whole point is applying the fix in place; exec stays opt-in.
     executor = ToolExecutor(root=args.root, gate=ToolGate(allow_write=True, allow_exec=args.allow_exec))
@@ -204,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined")
+    ap.add_argument("--no-repo-map", action="store_true", dest="no_repo_map",
+                    help="skip auto-folding a bounded repo map (--root) into the system prompt "
+                    "(--agent/--watch only); the model can still call the repo_map tool itself")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
     ap.add_argument("--check", default="",
                     help="an acceptance command (e.g. \"pytest -q\") run once after the "

@@ -14,6 +14,7 @@ import re
 
 _IGNORE = {".git", "__pycache__", "node_modules", ".venv", "venv", "dist",
            "build", ".pytest_cache", ".mypy_cache", ".idea", ".vscode", "target"}
+DEFAULT_MAX_BYTES = 4096
 
 # Regex symbol patterns per extension (crude vs tree-sitter, but zero-dep and
 # enough to navigate). Each pattern's group(1) is the symbol name. Patterns are
@@ -111,20 +112,36 @@ def _symbols(path: str, max_symbols: int) -> list:
     return out
 
 
+def _cap_bytes(text: str, max_bytes: int) -> str:
+    raw = text.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return text
+    marker = f"\n[map truncated at {max_bytes} bytes]"
+    marker_raw = marker.encode("utf-8")
+    if len(marker_raw) >= max_bytes:
+        return marker_raw[:max_bytes].decode("utf-8", errors="ignore")
+    keep = max_bytes - len(marker_raw)
+    return raw[:keep].decode("utf-8", errors="ignore") + marker
+
+
 def build_repo_map(root: str, *, max_files: int = 40, max_symbols: int = 40,
-                   rel_to: "str | None" = None) -> str:
+                   rel_to: "str | None" = None, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
     """A compact, deterministic outline of `root`: Python files with their
-    symbols, other files by path. Truncation is reported, never silent."""
+    symbols, other files by path. Truncation is reported, never silent, and
+    the returned UTF-8 text is capped at `max_bytes`."""
     base = rel_to or root
     py_blocks, other, files_seen, truncated = [], [], 0, False
     for dirpath, dirnames, filenames in os.walk(root):
+        if files_seen >= max_files:
+            truncated = True
+            break
         dirnames[:] = sorted(d for d in dirnames if d not in _IGNORE)
         for name in sorted(filenames):
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, base).replace(os.sep, "/")
             if files_seen >= max_files:
                 truncated = True
-                continue
+                break
             files_seen += 1
             if name.endswith(".py"):
                 syms = _symbols(full, max_symbols)
@@ -134,6 +151,9 @@ def build_repo_map(root: str, *, max_files: int = 40, max_symbols: int = 40,
                 py_blocks.append(rel + ("\n" + "\n".join(syms) if syms else ""))
             else:
                 other.append(rel)
+        if files_seen >= max_files:
+            truncated = True
+            break
     parts = []
     if py_blocks:
         parts.append("\n".join(py_blocks))
@@ -141,4 +161,4 @@ def build_repo_map(root: str, *, max_files: int = 40, max_symbols: int = 40,
         parts.append("other files:\n  " + "\n  ".join(other))
     if truncated:
         parts.append(f"[map truncated at {max_files} files]")
-    return "\n\n".join(parts) if parts else "(empty)"
+    return _cap_bytes("\n\n".join(parts) if parts else "(empty)", max_bytes)
