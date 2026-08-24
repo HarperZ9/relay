@@ -50,6 +50,33 @@ A missing credential just drops that tier from the ladder.
   destructive spellings: a guardrail against a small model wrecking the tree, not
   a security boundary.
 
+## Watch mode: a marker comment, in any editor
+
+No editor plugin, so it works the same in vim, Notepad, or a hex editor: drop a
+comment with the marker anywhere in the tree and relay picks it up.
+
+```bash
+relay --watch --root . --allow-write     # polls for "RELAY:" comments; Ctrl-C to stop
+```
+
+```python
+def add(a, b):
+    return a - b  # RELAY: this should add, not subtract
+```
+
+Each marker becomes its own agent goal with its own witnessed ledger, through the
+exact same gated tool loop as any other run — the model is told to remove the
+marker itself via `edit_file` once it has acted, so even a change you triggered by
+typing a comment, not a prompt, is never a bypass of the ledger. `--watch-marker`
+changes the trigger string; `--watch-interval` the poll period.
+
+## Project conventions, once
+
+Drop an `AGENTS.md` or `CONVENTIONS.md` at your project root and every `--agent`
+/ `--watch` run folds it into the system prompt automatically (verbatim, never
+summarized, length-bounded so an oversized file degrades instead of blowing a
+small model's context). `--no-conventions` opts out.
+
 ## The wedge: a provable run
 
 Every turn, tool call, and result is appended to a **hash-chained session
