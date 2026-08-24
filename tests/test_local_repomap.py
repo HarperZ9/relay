@@ -41,6 +41,29 @@ def test_truncation_is_reported(tmp_path):
     assert "truncated at 3 files" in m
 
 
+def test_repo_map_has_hard_byte_bound_even_for_one_huge_identifier(tmp_path):
+    huge_name = "f" + ("x" * 10000)
+    (tmp_path / "huge.py").write_text(f"def {huge_name}():\n    pass\n", encoding="utf-8")
+
+    m = build_repo_map(str(tmp_path), max_files=1, max_symbols=10, max_bytes=240)
+
+    assert len(m.encode("utf-8")) <= 240
+    assert "truncated at 240 bytes" in m
+
+
+def test_repo_map_stops_traversal_as_soon_as_file_cap_is_reached(tmp_path, monkeypatch):
+    def fake_walk(root):
+        yield str(tmp_path), [], ["first.txt"]
+        raise AssertionError("walked past max_files")
+
+    monkeypatch.setattr("relay.local_repomap.os.walk", fake_walk)
+
+    m = build_repo_map(str(tmp_path), max_files=1)
+
+    assert "first.txt" in m
+    assert "truncated at 1 files" in m
+
+
 def test_unparseable_file_is_skipped_not_fatal(tmp_path):
     (tmp_path / "bad.py").write_text("def (:\n", encoding="utf-8")   # syntax error
     (tmp_path / "good.py").write_text("def g():\n    pass\n", encoding="utf-8")

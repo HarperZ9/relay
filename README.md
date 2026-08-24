@@ -80,10 +80,11 @@ small model's context). `--no-conventions` opts out.
 ## Ambient repo context
 
 `--agent`/`--watch` fold a bounded repo map into the system prompt automatically
-(`--root`, capped so it never grows unbounded on a large tree): the model starts
-with the codebase's shape instead of spending its first turn calling `repo_map`
-to ask for it. It can still call `repo_map` itself for more detail or a
-subdirectory; this is a head start, not a replacement. `--no-repo-map` opts out.
+(`--root`, stopped at 20 files and capped at 4096 UTF-8 bytes so it never grows
+unbounded on a large tree): the model starts with the codebase's shape instead
+of spending its first turn calling `repo_map` to ask for it. It can still call
+`repo_map` itself for more detail or a subdirectory; this is a head start, not a
+replacement. `--no-repo-map` opts out.
 
 This closes a real, verified gap in *what context the model has* (Copilot's
 agent mode does this too). It is not a claim about the small local model's

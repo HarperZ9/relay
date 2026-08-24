@@ -68,8 +68,13 @@ def _emit(resp: dict, as_json: bool) -> None:
     print(f"\n[{resp.get('backend', '?')} | receipt {rid}]", file=sys.stderr)
 
 
+def _live_backend(agent):
+    live_backend = getattr(agent, "live_backend", None)
+    return live_backend() if callable(live_backend) else None
+
+
 def _repl(agent: LocalAgent, as_json: bool) -> int:
-    live = agent.live_backend()
+    live = _live_backend(agent)
     print(f"local-agent REPL — backend: {live.name if live else 'NONE LIVE'} "
           f"(/health, /reset, /exit)", file=sys.stderr)
     while True:
@@ -115,7 +120,7 @@ def _run_agentic(args) -> int:
         print("[error] --agent needs a task prompt", file=sys.stderr)
         return 2
     agent = _coding_agent(args)
-    if agent.live_backend() is None:
+    if _live_backend(agent) is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
         return 1
     executor = ToolExecutor(root=args.root,
@@ -167,7 +172,7 @@ def _run_watch(args) -> int:
     import time
 
     agent = _coding_agent(args)
-    if agent.live_backend() is None:
+    if _live_backend(agent) is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
         return 1
     # watch mode's whole point is applying the fix in place; exec stays opt-in.

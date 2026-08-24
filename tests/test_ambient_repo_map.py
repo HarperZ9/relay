@@ -82,6 +82,15 @@ def test_does_not_crash_on_an_agent_double_without_system(monkeypatch, tmp_path)
     cli._coding_agent(args)   # must not raise
 
 
+def test_cli_agent_path_exits_cleanly_for_a_double_without_system(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "_build_agent", lambda args: object())   # no .system, no backend probe
+
+    rc = cli.main(["do the thing", "--agent", "--root", str(tmp_path)])
+
+    assert rc == 1
+    assert "no local backend" in capsys.readouterr().err
+
+
 def test_cli_agent_run_end_to_end_uses_coding_agent(monkeypatch, tmp_path):
     (tmp_path / "seen_module.py").write_text("def f():\n    pass\n", encoding="utf-8")
     captured = {}
