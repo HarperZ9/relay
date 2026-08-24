@@ -73,6 +73,10 @@ def _live_backend(agent):
     return live_backend() if callable(live_backend) else None
 
 
+def _has_send(agent) -> bool:
+    return callable(getattr(agent, "send", None))
+
+
 def _repl(agent: LocalAgent, as_json: bool) -> int:
     live = _live_backend(agent)
     print(f"local-agent REPL — backend: {live.name if live else 'NONE LIVE'} "
@@ -104,7 +108,12 @@ def _coding_agent(args) -> LocalAgent:
     """Build the coding agent with optional project conventions and repo map."""
     agent = _build_agent(args)
     if not hasattr(agent, "system"):
-        return agent
+        try:
+            agent.system = ""
+        except AttributeError:
+            return agent
+    elif not isinstance(agent.system, str):
+        agent.system = str(agent.system or "")
 
     if not getattr(args, "no_conventions", False):
         agent.system = with_conventions(agent.system, args.root)
@@ -122,6 +131,9 @@ def _run_agentic(args) -> int:
     agent = _coding_agent(args)
     if _live_backend(agent) is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
+        return 1
+    if not _has_send(agent):
+        print("[error] coding agent is missing send()", file=sys.stderr)
         return 1
     executor = ToolExecutor(root=args.root,
                             gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
@@ -174,6 +186,9 @@ def _run_watch(args) -> int:
     agent = _coding_agent(args)
     if _live_backend(agent) is None:
         print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
+        return 1
+    if not _has_send(agent):
+        print("[error] coding agent is missing send()", file=sys.stderr)
         return 1
     # watch mode's whole point is applying the fix in place; exec stays opt-in.
     executor = ToolExecutor(root=args.root, gate=ToolGate(allow_write=True, allow_exec=args.allow_exec))

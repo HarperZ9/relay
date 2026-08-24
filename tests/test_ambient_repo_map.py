@@ -91,6 +91,36 @@ def test_cli_agent_path_exits_cleanly_for_a_double_without_system(monkeypatch, t
     assert "no local backend" in capsys.readouterr().err
 
 
+def test_cli_agent_path_exits_cleanly_for_a_live_double_without_send(monkeypatch, tmp_path, capsys):
+    D = type("D", (), {"live_backend": lambda self: object()})
+    monkeypatch.setattr(cli, "_build_agent", lambda args: D())
+
+    rc = cli.main(["task", "--agent", "--root", str(tmp_path)])
+
+    assert rc == 1
+    assert "missing send" in capsys.readouterr().err
+
+
+def test_cli_agent_path_initializes_system_for_a_live_double_without_system(monkeypatch, tmp_path):
+    (tmp_path / "seen_module.py").write_text("def f():\n    pass\n", encoding="utf-8")
+    captured = {}
+
+    class LiveNoSystem:
+        def live_backend(self):
+            return object()
+
+        def send(self, message):
+            captured["system"] = self.system
+            return {"content": [{"type": "text", "text": "done"}], "backend": "stub"}
+
+    monkeypatch.setattr(cli, "_build_agent", lambda args: LiveNoSystem())
+
+    rc = cli.main(["do the thing", "--agent", "--root", str(tmp_path)])
+
+    assert rc == 0
+    assert "seen_module" in captured["system"]
+
+
 def test_cli_agent_run_end_to_end_uses_coding_agent(monkeypatch, tmp_path):
     (tmp_path / "seen_module.py").write_text("def f():\n    pass\n", encoding="utf-8")
     captured = {}
@@ -100,6 +130,9 @@ def test_cli_agent_run_end_to_end_uses_coding_agent(monkeypatch, tmp_path):
 
         def live_backend(self):
             return object()
+
+        def send(self, message):
+            raise AssertionError("run_agent is patched in this test")
     monkeypatch.setattr(cli, "_build_agent", lambda args: _Live2())
     monkeypatch.setattr(cli, "run_agent",
                         lambda agent, goal, *a, **k: (captured.update(system=agent.system),
