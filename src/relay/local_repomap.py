@@ -124,41 +124,96 @@ def _cap_bytes(text: str, max_bytes: int) -> str:
     return raw[:keep].decode("utf-8", errors="ignore") + marker
 
 
-def build_repo_map(root: str, *, max_files: int = 40, max_symbols: int = 40,
-                   rel_to: "str | None" = None, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
-    """A compact, deterministic outline of `root`: Python files with their
-    symbols, other files by path. Truncation is reported, never silent, and
-    the returned UTF-8 text is capped at `max_bytes`."""
-    base = rel_to or root
-    py_blocks, other, files_seen, truncated = [], [], 0, False
+DEFAULT_SCAN_CAP = 2000
+
+
+def _scan(root: str, base: str, scan_cap: int) -> "tuple[list, bool]":
+    """Walk `root` (ignoring noise dirs) and return up to `scan_cap` (rel, full,
+    name) triples plus whether the cap was hit. Deterministic (sorted dirs + files);
+    the cap bounds the walk on a huge repo instead of stopping at the display limit."""
+    files, hit = [], False
     for dirpath, dirnames, filenames in os.walk(root):
-        if files_seen >= max_files:
-            truncated = True
-            break
         dirnames[:] = sorted(d for d in dirnames if d not in _IGNORE)
         for name in sorted(filenames):
+            if len(files) >= scan_cap:
+                return files, True
             full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, base).replace(os.sep, "/")
-            if files_seen >= max_files:
-                truncated = True
-                break
-            files_seen += 1
-            if name.endswith(".py"):
-                syms = _symbols(full, max_symbols)
-                py_blocks.append(rel + ("\n" + "\n".join(syms) if syms else ""))
-            elif (pats := _lang_for(name)) is not None:
-                syms = _regex_symbols(full, pats, max_symbols)
-                py_blocks.append(rel + ("\n" + "\n".join(syms) if syms else ""))
-            else:
-                other.append(rel)
-        if files_seen >= max_files:
-            truncated = True
-            break
+            files.append((os.path.relpath(full, base).replace(os.sep, "/"), full, name))
+    return files, hit
+
+
+def _imported_modules(full: str) -> set:
+    try:
+        with open(full, encoding="utf-8", errors="replace") as f:
+            tree = ast.parse(f.read())
+    except (SyntaxError, ValueError, OSError):
+        return set()
+    mods = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                mods.update(alias.name.split("."))
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                mods.update(node.module.split("."))
+            for alias in node.names:
+                mods.add(alias.name)
+    return mods
+
+
+def _import_indegree(scanned: list) -> dict:
+    """How many scanned Python files import each file, keyed by its module basename.
+    A stdlib approximation of aider's PageRank: the most-imported files rank first."""
+    by_module: dict = {}
+    for rel, _, name in scanned:
+        if name.endswith(".py"):
+            by_module.setdefault(name[:-3], []).append(rel)
+    deg = {rel: 0 for rel, _, _ in scanned}
+    for rel, full, name in scanned:
+        if not name.endswith(".py"):
+            continue
+        for mod in _imported_modules(full):
+            for target in by_module.get(mod, ()):
+                if target != rel:
+                    deg[target] += 1
+    return deg
+
+
+def _rank(scanned: list) -> list:
+    """Most-imported first, then code before data, then path (all deterministic)."""
+    deg = _import_indegree(scanned)
+    return sorted(scanned, key=lambda t: (-deg[t[0]], not t[2].endswith(".py"), t[0]))
+
+
+def build_repo_map(root: str, *, max_files: int = 40, max_symbols: int = 40,
+                   rel_to: "str | None" = None, max_bytes: int = DEFAULT_MAX_BYTES,
+                   scan_cap: int = DEFAULT_SCAN_CAP) -> str:
+    """A compact, deterministic outline of `root`, RANKED so the most-referenced
+    files appear first (not the alphabetically-first, which on a repo past the cap
+    could omit the file the model needs). Python files carry their symbols, other
+    files are listed by path. The walk is bounded by `scan_cap`, every truncation is
+    reported, never silent, and the returned UTF-8 text is capped at `max_bytes`."""
+    base = rel_to or root
+    scanned, scan_hit = _scan(root, base, scan_cap)
+    ranked = _rank(scanned)
+    kept = ranked[:max_files]
+    py_blocks, other = [], []
+    for rel, full, name in kept:
+        if name.endswith(".py"):
+            syms = _symbols(full, max_symbols)
+            py_blocks.append(rel + ("\n" + "\n".join(syms) if syms else ""))
+        elif (pats := _lang_for(name)) is not None:
+            syms = _regex_symbols(full, pats, max_symbols)
+            py_blocks.append(rel + ("\n" + "\n".join(syms) if syms else ""))
+        else:
+            other.append(rel)
     parts = []
     if py_blocks:
         parts.append("\n".join(py_blocks))
     if other:
         parts.append("other files:\n  " + "\n  ".join(other))
-    if truncated:
-        parts.append(f"[map truncated at {max_files} files]")
+    if len(kept) < len(ranked):
+        parts.append(f"[map truncated at {max_files} files; showing the most-referenced]")
+    if scan_hit:
+        parts.append(f"[repo scan bounded at {scan_cap} files]")
     return _cap_bytes("\n\n".join(parts) if parts else "(empty)", max_bytes)

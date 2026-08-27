@@ -51,17 +51,28 @@ def test_repo_map_has_hard_byte_bound_even_for_one_huge_identifier(tmp_path):
     assert "truncated at 240 bytes" in m
 
 
-def test_repo_map_stops_traversal_as_soon_as_file_cap_is_reached(tmp_path, monkeypatch):
+def test_scan_is_bounded_by_the_scan_cap(tmp_path, monkeypatch):
+    # the walk stops at scan_cap (the huge-repo guard), not at the whole tree.
     def fake_walk(root):
-        yield str(tmp_path), [], ["first.txt"]
-        raise AssertionError("walked past max_files")
+        yield str(tmp_path), [], [f"f{i}.txt" for i in range(5)]
+        raise AssertionError("walked past the scan cap")
 
     monkeypatch.setattr("relay.local_repomap.os.walk", fake_walk)
 
-    m = build_repo_map(str(tmp_path), max_files=1)
+    m = build_repo_map(str(tmp_path), max_files=10, scan_cap=3)
 
-    assert "first.txt" in m
-    assert "truncated at 1 files" in m
+    assert "f0.txt" in m and "f3.txt" not in m   # only the first 3 were scanned
+    assert "scan bounded at 3 files" in m
+
+
+def test_most_imported_file_ranks_in_even_when_named_last(tmp_path):
+    # the old map kept the first files alphabetically, so a central file named 'zzz'
+    # could be omitted under a tight cap. Ranking by import in-degree keeps it.
+    (tmp_path / "zzz.py").write_text("def core():\n    return 1\n", encoding="utf-8")
+    for i in range(5):
+        (tmp_path / f"a{i}.py").write_text("import zzz\n", encoding="utf-8")
+    m = build_repo_map(str(tmp_path), max_files=2)
+    assert "zzz.py" in m and "def core (L1)" in m   # ranked in by in-degree, not name
 
 
 def test_unparseable_file_is_skipped_not_fatal(tmp_path):
