@@ -88,7 +88,9 @@ def _run_projection(r: dict) -> dict:
     # answer), never the self-confirming in-memory chain check alone.
     return {"final": r["final"], "steps": r["steps"], "verified": r["verified"],
             "final_answer": r["final_answer"], "chain_ok": r["chain_ok"],
-            "checkpoint": r["checkpoint"]}
+            "checkpoint": r["checkpoint"],
+            # the intent/scope audit (claimed_history + any declared drift/scope).
+            "intent_audit": r.get("intent_audit", {"findings": [], "critical": 0, "warnings": 0})}
 
 
 def _call(params: dict) -> dict:

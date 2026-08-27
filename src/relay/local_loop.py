@@ -122,6 +122,7 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
 def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
           check_passed: "bool | None" = None, note: str = "") -> dict:
     from .integrity import integrity_report, trajectory_integrity
+    from .intent_audit import audit_intent
     from .review import risk_review, run_review
     chain_ok = ledger.verify()
     receipts_ok = verify_receipts(ledger)
@@ -147,6 +148,9 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
             # per-edit risk tiers, both derived from the witnessed ledger (facts, not prose)
             "review": run_review(ledger.entries),
             "risk": risk_review(ledger.entries),
+            # intent/scope audit (ported from agent-audit): claimed_history runs on
+            # every run and flags reasoning that claims work the ledger never did.
+            "intent_audit": audit_intent(ledger),
             # ACCEPTED = a verified trajectory whose acceptance check did not fail AND
             # whose pass was not gamed by tampering with the check. No check -> collapses
             # to `verified`; a failed OR tampered pass is never accepted.
