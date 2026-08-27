@@ -189,7 +189,8 @@ def _run_agentic(args) -> int:
     result = run_agent(agent, _context_preamble(args.file) + args.prompt, executor, ledger,
                        max_steps=args.max_steps, check=args.check or None,
                        test_cmd=args.test_cmd or None,
-                       approve=_stdin_approver() if getattr(args, "interactive", False) else None)
+                       approve=_stdin_approver() if getattr(args, "interactive", False) else None,
+                       compact_budget=getattr(args, "compact_budget", 0))
     print(result["final"])
     if args.save:
         ledger.save(args.save)
@@ -328,6 +329,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip auto-folding a bounded repo map (--root) into the system prompt "
                     "(--agent/--watch only); the model can still call the repo_map tool itself")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
+    ap.add_argument("--compact-budget", type=int, default=0, dest="compact_budget",
+                    help="with --agent, fold older turns once the prompt passes N tokens, "
+                    "pinning the task anchor and policy text; each fold is witnessed on the "
+                    "ledger with the folded-span and summary hashes (0 = off)")
     ap.add_argument("--best-of", type=int, default=1, dest="best_of",
                     help="with --agent, run the goal N times and select the VERIFIED winner "
                          "(chain intact, check not gamed, integrity clean), not a judge; --save "

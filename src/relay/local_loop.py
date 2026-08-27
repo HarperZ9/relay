@@ -66,10 +66,24 @@ def _execute_masked(executor, calls: list, mask: list) -> list:
     return out
 
 
+def _maybe_compact(agent, budget: int, ledger) -> None:
+    """Fold the agent's growing history to fit `budget` and WITNESS the fold on the
+    ledger. The untruncated trajectory stays on the ledger; only the prompt shrinks,
+    and the receipt binds the folded span + summary hashes so the fold is re-checkable."""
+    from .compaction import compact
+    history = getattr(agent, "history", None)
+    if not history:
+        return
+    res = compact(history, token_budget=budget)
+    if res.compacted:
+        agent.history = res.messages
+        ledger.append("compaction", res.receipt["summary_sha256"], res.receipt)
+
+
 def run_agent(agent, goal: str, executor: ToolExecutor,
               ledger: "SessionLedger | None" = None, *, max_steps: int = 6,
               check: "str | None" = None, test_cmd: "str | None" = None,
-              approve=None) -> dict:
+              approve=None, compact_budget: int = 0) -> dict:
     """Run the goal to completion (or max_steps). Returns the final answer, the
     step count, and the ledger checkpoint + verdict.
 
@@ -90,6 +104,8 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
     ledger.append("user", goal)
     message = goal
     for step in range(1, max_steps + 1):
+        if compact_budget:
+            _maybe_compact(agent, compact_budget, ledger)   # opt-in; keeps the prompt in-budget
         try:
             resp = agent.send(message)
         except BackendError as e:

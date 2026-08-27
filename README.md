@@ -65,6 +65,18 @@ A missing credential just drops that tier from the ladder.
   destructive spellings: a guardrail against a small model wrecking the tree, not
   a security boundary.
 
+Two opt-in loop features, both witnessed:
+
+- **`--interactive`**: prompt for approval before every mutating call. Each decision
+  is a hash-chained ledger entry bound to the call's exact bytes, so the `.rvc` can
+  prove a human gated the step and the approved bytes match the executed bytes. Off
+  by default, and a headless run is byte-identical to one without it.
+- **`--compact-budget N`**: once the prompt passes `N` tokens, fold older turns into
+  one summary so the loop keeps running in any context window, pinning the task
+  anchor and the policy text. Every fold records the folded-span and summary hashes
+  on the ledger, and the untruncated trajectory stays there, so shrinking the prompt
+  never loses the record.
+
 ## Watch mode: a marker comment, in any editor
 
 No editor plugin, so it works the same in vim, Notepad, or a hex editor: drop a
