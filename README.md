@@ -137,7 +137,7 @@ print(agent.send("hi")["content"][0]["text"])
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Relay is fair-source: open to read, run, and build on, with commercial use reserved so the project can fund its own development. See [LICENSE](LICENSE).
 
 ## What this believes
 
