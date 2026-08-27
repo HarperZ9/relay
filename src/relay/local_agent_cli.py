@@ -253,6 +253,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--providers", default="",
                     help="comma list to restrict online providers (default: all configured)")
     ap.add_argument("--mcp", action="store_true", help="run as a stdio MCP server")
+    ap.add_argument("--view", default="", metavar="LEDGER.jsonl",
+                    help="visualize a saved run ledger as a hash-chained trajectory "
+                         "(green intact / red broken) with integrity + intent overlays, then exit")
+    ap.add_argument("--no-color", action="store_true", dest="no_color",
+                    help="with --view, emit a plain-text (byte-stable) timeline")
     ap.add_argument("--probe-injection", action="store_true", dest="probe_injection",
                     help="run the defensive prompt-injection robustness probe over the gated tool "
                          "loop and report containment (honors --allow-write/--allow-exec; runs in a "
@@ -276,6 +281,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.mcp:
         from .local_mcp import serve
         return serve()
+    if args.view:
+        from .run_view import load_run, render, verify_edges
+        try:
+            view = load_run(args.view)
+        except (OSError, ValueError) as e:
+            print(f"[error] {e}", file=sys.stderr)
+            return 1
+        sys.stdout.write(render(view.ledger, view.result, color=not args.no_color))
+        return 0 if all(es.status == "OK" for es in verify_edges(view.ledger)) else 1
     if args.watch:
         return _run_watch(args)
     if args.agent:
