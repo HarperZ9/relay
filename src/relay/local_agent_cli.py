@@ -124,6 +124,34 @@ def _coding_agent(args) -> LocalAgent:
     return agent
 
 
+def _env_hash(root: str) -> str:
+    """A content anchor over the dependency lockfile, so the cert names the env it
+    ran in. Absent lockfile -> empty (declared, not re-derived; see cert.py)."""
+    import hashlib
+    import pathlib
+    for name in ("uv.lock", "poetry.lock", "requirements.txt", "pyproject.toml"):
+        p = pathlib.Path(root) / name
+        if p.exists():
+            return hashlib.sha256(p.read_bytes()).hexdigest()[:16]
+    return ""
+
+
+def _write_cert(args, result) -> None:
+    import json as _json
+
+    from .cert import emit_cert
+    from .contract import Contract, STRICT
+    contract = STRICT
+    if args.contract:
+        with open(args.contract, encoding="utf-8") as fh:
+            contract = Contract.from_dict(_json.load(fh))
+    cert = emit_cert(result, contract, env_hash=_env_hash(args.root))
+    with open(args.cert, "w", encoding="utf-8") as fh:
+        _json.dump(cert, fh)
+    print(f"[cert | {cert['verdict']} | wrote {args.cert} | "
+          f"verify offline: python verify_cert.py {args.cert}]", file=sys.stderr)
+
+
 def _run_agentic(args) -> int:
     if not args.prompt:
         print("[error] --agent needs a task prompt", file=sys.stderr)
@@ -144,6 +172,8 @@ def _run_agentic(args) -> int:
     print(result["final"])
     if args.save:
         ledger.save(args.save)
+    if args.cert:
+        _write_cert(args, result)
     committed = ""
     if args.auto_commit:
         if result["accepted"]:
@@ -258,6 +288,13 @@ def main(argv: list[str] | None = None) -> int:
                          "(green intact / red broken) with integrity + intent overlays, then exit")
     ap.add_argument("--no-color", action="store_true", dest="no_color",
                     help="with --view, emit a plain-text (byte-stable) timeline")
+    ap.add_argument("--cert", default="", metavar="RUN.rvc",
+                    help="with --agent, write a proof-carrying .rvc certificate of the run "
+                         "(a stranger verifies it offline with verify_cert.py, no model, no re-run)")
+    ap.add_argument("--contract", default="", metavar="CONTRACT.json",
+                    help="with --cert, the acceptance contract to certify against (default: strict)")
+    ap.add_argument("--verify-cert", default="", dest="verify_cert", metavar="RUN.rvc",
+                    help="verify a .rvc certificate and print ALLOW/UNVERIFIABLE/REFUTED, then exit")
     ap.add_argument("--probe-injection", action="store_true", dest="probe_injection",
                     help="run the defensive prompt-injection robustness probe over the gated tool "
                          "loop and report containment (honors --allow-write/--allow-exec; runs in a "
@@ -290,6 +327,18 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         sys.stdout.write(render(view.ledger, view.result, color=not args.no_color))
         return 0 if all(es.status == "OK" for es in verify_edges(view.ledger)) else 1
+    if args.verify_cert:
+        import json as _json
+
+        from .cert import verify_cert
+        try:
+            with open(args.verify_cert, encoding="utf-8") as fh:
+                label, detail = verify_cert(_json.load(fh))
+        except (OSError, ValueError) as e:
+            print(f"[error] {e}", file=sys.stderr)
+            return 1
+        print(f"{label}  {detail}")
+        return 0 if label == "ALLOW" else 1
     if args.watch:
         return _run_watch(args)
     if args.agent:
