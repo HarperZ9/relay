@@ -110,3 +110,14 @@ def test_unverifiable_when_a_named_test_cannot_be_confirmed():
 def test_contract_and_clause_are_content_addressed():
     assert STRICT.sha256() == Contract.from_dict(STRICT.to_dict()).sha256()
     assert Clause("chain_intact").sha256() != Clause("check_not_gamed").sha256()
+
+
+def test_claim_grounded_clause_refutes_a_lying_summary():
+    led = SessionLedger()
+    led.append("user", "fix the parser")
+    led.append("check", "[exit 1]\n1 failed", {"cmd": "pytest -q", "ok": False})
+    led.append("assistant", "Fixed the parser; all tests pass.")  # a lie over a failed check
+    contract = Contract((Clause("claim_grounded"),))
+    cert = emit_cert({"ledger": led}, contract, env_hash="x")
+    label, detail = verify_cert(cert)
+    assert label == "REFUTED" and "refutes" in detail

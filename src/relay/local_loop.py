@@ -121,6 +121,7 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
 
 def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
           check_passed: "bool | None" = None, note: str = "") -> dict:
+    from .claim_grounding import ground_final_answer
     from .integrity import integrity_report, trajectory_integrity
     from .intent_audit import audit_intent
     from .review import risk_review, run_review
@@ -151,6 +152,10 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
             # intent/scope audit (ported from agent-audit): claimed_history runs on
             # every run and flags reasoning that claims work the ledger never did.
             "intent_audit": audit_intent(ledger),
+            # claim grounding: is the FINAL ANSWER entailed by the witnessed ledger?
+            # GROUNDED / UNGROUNDED / REFUTED / UNVERIFIABLE -- a lying summary over an
+            # intact chain is caught here.
+            "grounded": ground_final_answer(ledger)["verdict"],
             # ACCEPTED = a verified trajectory whose acceptance check did not fail AND
             # whose pass was not gamed by tampering with the check. No check -> collapses
             # to `verified`; a failed OR tampered pass is never accepted.

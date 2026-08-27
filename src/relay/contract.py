@@ -23,7 +23,7 @@ from dataclasses import dataclass
 SCHEMA = "relay.accept-contract/v1"
 ALLOW, UNVERIFIABLE, REFUTED = "ALLOW", "UNVERIFIABLE", "REFUTED"
 CLAUSE_TYPES = ("chain_intact", "check_not_gamed", "no_claimed_history",
-                "no_edit", "tests_pass", "reviewability")
+                "no_edit", "tests_pass", "reviewability", "claim_grounded")
 
 
 def _sha(obj) -> str:
@@ -110,6 +110,15 @@ def _eval_clause(clause: Clause, facts: dict):
         thr = _threshold(clause.arg)
         ok = facts["reviewability"] >= thr
         return ok, f"reviewability {facts['reviewability']:.2f} vs threshold {thr:.2f}"
+    if t == "claim_grounded":
+        verdict = facts.get("grounding_verdict", "GROUNDED")
+        if verdict == "REFUTED":
+            return False, "the final answer claims work the ledger refutes"
+        if verdict == "UNGROUNDED":
+            return False, "the final answer claims work the ledger does not witness"
+        if verdict == "UNVERIFIABLE":
+            return None, "a summary claim could not be parsed (grounding fail-closed)"
+        return True, "every checkable claim is grounded in the ledger"
     return None, f"unknown clause {t!r}"
 
 

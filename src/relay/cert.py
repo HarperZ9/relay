@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from .claim_grounding import ground_final_answer
 from .contract import STRICT, Contract, evaluate
 from .integrity import integrity_report, trajectory_integrity
 from .intent_audit import audit_intent
@@ -76,6 +77,7 @@ def derive_facts(ledger) -> dict:
         "intent_critical": audit_intent(ledger)["critical"],
         "reviewability": run_review(ledger.entries)["reviewability"],
         "edited_paths": _edited_paths(ledger),
+        "grounding_verdict": ground_final_answer(ledger)["verdict"],
     }
 
 

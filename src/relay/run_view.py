@@ -76,24 +76,32 @@ def _first_broken(edges: list[EdgeStatus]) -> EdgeStatus | None:
     return next((e for e in edges if e.status == BROKEN), None)
 
 
-def _verdict(result: dict | None, edges: list[EdgeStatus]) -> tuple[str, str, str]:
-    """Return (label, ansi_color, detail). Verdict-only: ALLOW / UNVERIFIABLE /
-    REFUTED, never rounded up. A broken chain refutes everything."""
+def _verdict(result: dict | None, edges: list[EdgeStatus],
+             grounding: str | None = None) -> tuple[str, str, str]:
+    """Return (label, ansi_color, detail). Verdict-only: ALLOW / UNGROUNDED /
+    UNVERIFIABLE / REFUTED, never rounded up. A broken chain, a gamed grader, or a
+    summary the ledger refutes each refutes the run."""
     broken = _first_broken(edges)
     if broken is not None:
         return "REFUTED", _RED, f"hash chain broken at seq {broken.seq} ({broken.reason})"
-    n = len(edges)
+    if grounding == "REFUTED":
+        return "REFUTED", _RED, "the final answer claims work the ledger refutes"
     if result is None:
-        return "CHAIN INTACT", _AMBER, f"{n} entries re-derive; no accept certificate attached"
+        if grounding == "UNGROUNDED":
+            return "UNGROUNDED", _AMBER, "the final answer claims work the ledger does not witness"
+        return "CHAIN INTACT", _AMBER, f"{len(edges)} entries re-derive; no accept certificate attached"
     if not result.get("check_trusted", True):
         return "REFUTED", _RED, "acceptance check passed but the grader was tampered with"
+    if grounding == "UNGROUNDED":
+        return "UNGROUNDED", _AMBER, "the final answer claims work the ledger does not witness"
     if result.get("accepted"):
         return "ALLOW", _GREEN, "run accepted: verified, chain intact, check not gamed"
     return "UNVERIFIABLE", _AMBER, "chain intact but the run was not accepted"
 
 
-def _header(result: dict | None, edges: list[EdgeStatus], color: bool) -> list[str]:
-    label, ansi, detail = _verdict(result, edges)
+def _header(result: dict | None, edges: list[EdgeStatus], grounding: str | None,
+            color: bool) -> list[str]:
+    label, ansi, detail = _verdict(result, edges, grounding)
     lines = [_paint(f"{label}", _BOLD + ansi, color) + "  " + _paint(detail, _DIM, color)]
     if result is not None:
         cert = "  ".join(f"{k}={result.get(k)}" for k in
@@ -153,9 +161,11 @@ def _index_flags(ledger) -> tuple[dict, dict]:
 def render(ledger, result: dict | None = None, *, color: bool = True) -> str:
     """A vertical timeline: accept-certificate header, then one node per entry with
     its hash-chain edge (green intact / red broken) and any integrity/intent flag."""
+    from .claim_grounding import ground_final_answer
     edges = verify_edges(ledger)
     integrity, intent = _index_flags(ledger)
-    lines = _header(result, edges, color)
+    grounding = ground_final_answer(ledger)
+    lines = _header(result, edges, grounding["verdict"], color)
     for i, e in enumerate(ledger.entries):
         edge = edges[i]
         glyph = ("|" if not color else (_GREEN + "│" + _RESET if edge.status == OK
@@ -168,6 +178,10 @@ def render(ledger, result: dict | None = None, *, color: bool = True) -> str:
             node += _paint(f"   <- {edge.reason}", _RED, color) if color else f"   <- {edge.reason}"
         lines.append(node)
         lines += _overlays(e.seq, integrity, intent, color)
+        if e.seq == grounding.get("seq") and grounding["verdict"] in ("REFUTED", "UNGROUNDED"):
+            ansi = _RED if grounding["verdict"] == "REFUTED" else _AMBER
+            lines.append(_paint(f"      ! grounding: the summary is {grounding['verdict']} "
+                                "against the ledger", ansi, color))
     lines += _footer(ledger, color)
     return "\n".join(lines) + "\n"
 
