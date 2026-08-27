@@ -194,7 +194,12 @@ def make_handler(cfg: RemoteMcpConfig):
             body = self.rfile.read(length) if length else b""
             lower = {k.lower(): v for k, v in self.headers.items()}
             if cfg.oauth is not None:
-                if method == "GET" and path == "/.well-known/oauth-protected-resource":
+                if method == "GET" and path in (
+                    "/.well-known/oauth-protected-resource",
+                    "/.well-known/oauth-protected-resource/mcp",
+                ):
+                    # a connector may probe the bare path or the resource-suffixed
+                    # variant (RFC 9728); serve the same metadata for both
                     self._send(*protected_resource_endpoint(cfg.oauth))
                     return
                 if method == "GET" and path == "/.well-known/oauth-authorization-server":
@@ -264,27 +269,7 @@ def serve(
     return server
 
 
-def main() -> int:
-    cfg = config_from_env()
-    if cfg is None:
-        print("remote MCP is off: set RELAY_REMOTE_TOKEN to enable it")
-        return 2
-    host = os.environ.get("RELAY_REMOTE_HOST", "127.0.0.1")
-    port = int(os.environ.get("RELAY_REMOTE_PORT", "8787"))
-    certfile = os.environ.get("RELAY_TLS_CERT") or None
-    keyfile = os.environ.get("RELAY_TLS_KEY") or None
-    server = serve(cfg, host, port, certfile=certfile, keyfile=keyfile)
-    scheme = "https" if certfile and keyfile else "http"
-    print(f"relay remote MCP on {scheme}://{host}:{port}{_ENDPOINT} "
-          f"(exec {'on' if cfg.allow_remote_exec else 'off'}, "
-          f"origins {'any' if not cfg.allowed_origins else len(cfg.allowed_origins)}, "
-          f"oauth {'on' if cfg.oauth is not None else 'off'}, tls {scheme == 'https'})")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        server.shutdown()
-    return 0
+if __name__ == "__main__":  # pragma: no cover
+    from .remote_cli import main
 
-
-if __name__ == "__main__":
     raise SystemExit(main())

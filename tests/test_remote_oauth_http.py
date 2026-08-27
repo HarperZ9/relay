@@ -133,3 +133,32 @@ def test_static_bearer_still_works_with_oauth_on():
         cfg, "POST", {"authorization": "Bearer static-admin"},
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}).encode())
     assert status == 200
+
+
+def test_handler_routes_discovery_and_mcp_401_over_socket():
+    import threading
+    import urllib.error
+    import urllib.request
+
+    from relay.remote_mcp import RemoteMcpConfig, serve
+
+    server = serve(RemoteMcpConfig(token="static-admin", oauth=_oauth()), host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        for path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+            with urllib.request.urlopen(base + path, timeout=5) as r:
+                assert r.status == 200 and json.loads(r.read())["resource"] == "https://pc.example/mcp"
+        with urllib.request.urlopen(base + "/.well-known/oauth-authorization-server", timeout=5) as r:
+            assert json.loads(r.read())["code_challenge_methods_supported"] == ["S256"]
+        req = urllib.request.Request(base + "/mcp", method="POST", data=b"{}")
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected 401")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401 and "resource_metadata" in e.headers.get("WWW-Authenticate", "")
+    finally:
+        server.shutdown()
+        server.server_close()
+        t.join(timeout=5)

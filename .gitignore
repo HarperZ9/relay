@@ -15,6 +15,7 @@ dist/
 # secrets / env
 .env
 .env.*
+!.env.example
 *.key
 *.token
 
