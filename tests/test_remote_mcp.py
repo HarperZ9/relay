@@ -176,3 +176,17 @@ def test_serves_over_a_real_socket():
         thread.join(timeout=5)
         server.server_close()
     assert not thread.is_alive()
+
+
+def test_serve_plain_http_without_cert():
+    server = serve(_cfg(), port=0)
+    try:
+        assert server.server_address[1] > 0  # bound, plain HTTP
+    finally:
+        server.server_close()
+
+
+def test_serve_with_missing_cert_raises_and_does_not_leak():
+    import pytest
+    with pytest.raises(OSError):  # FileNotFoundError from load_cert_chain
+        serve(_cfg(), port=0, certfile="/no/such/cert.pem", keyfile="/no/such/key.pem")

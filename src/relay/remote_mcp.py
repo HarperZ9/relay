@@ -234,14 +234,34 @@ def make_handler(cfg: RemoteMcpConfig):
     return _Handler
 
 
-def serve(cfg: RemoteMcpConfig, host: str = "127.0.0.1", port: int = 8787) -> ThreadingHTTPServer:
+def serve(
+    cfg: RemoteMcpConfig,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    *,
+    certfile: str | None = None,
+    keyfile: str | None = None,
+) -> ThreadingHTTPServer:
     """Build (do not start) a ThreadingHTTPServer for the remote MCP endpoint.
 
-    Bind to localhost by default; a public deployment fronts this with TLS and a
-    reverse tunnel rather than binding 0.0.0.0 directly. The caller runs
-    ``serve_forever()``.
+    With ``certfile``/``keyfile`` the listening socket is wrapped in TLS, so the
+    server speaks HTTPS directly -- what a phone MCP connector requires (it needs
+    a publicly-valid certificate; use a Let's Encrypt cert for your DDNS name, the
+    PEM files a stdlib ssl context loads). Without them it serves plain HTTP for
+    localhost / the PC path. The caller runs ``serve_forever()``.
     """
-    return ThreadingHTTPServer((host, port), make_handler(cfg))
+    server = ThreadingHTTPServer((host, port), make_handler(cfg))
+    if certfile and keyfile:
+        import ssl
+
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(certfile, keyfile)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        except Exception:
+            server.server_close()  # do not leak the bound socket on a cert error
+            raise
+    return server
 
 
 def main() -> int:
@@ -251,11 +271,14 @@ def main() -> int:
         return 2
     host = os.environ.get("RELAY_REMOTE_HOST", "127.0.0.1")
     port = int(os.environ.get("RELAY_REMOTE_PORT", "8787"))
-    server = serve(cfg, host, port)
-    print(f"relay remote MCP on http://{host}:{port}{_ENDPOINT} "
+    certfile = os.environ.get("RELAY_TLS_CERT") or None
+    keyfile = os.environ.get("RELAY_TLS_KEY") or None
+    server = serve(cfg, host, port, certfile=certfile, keyfile=keyfile)
+    scheme = "https" if certfile and keyfile else "http"
+    print(f"relay remote MCP on {scheme}://{host}:{port}{_ENDPOINT} "
           f"(exec {'on' if cfg.allow_remote_exec else 'off'}, "
           f"origins {'any' if not cfg.allowed_origins else len(cfg.allowed_origins)}, "
-          f"oauth {'on' if cfg.oauth is not None else 'off'})")
+          f"oauth {'on' if cfg.oauth is not None else 'off'}, tls {scheme == 'https'})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
