@@ -47,6 +47,11 @@ A missing credential just drops that tier from the ladder.
   instead of by repeating the line. It is compact, and an anchor computed against
   a stale view will not match, so a mismatched edit fails closed rather than
   landing on the wrong line.
+- **`edit_plan`**: a coordinated multi-file change applied as one all-or-nothing
+  checkpoint. Every hash-anchored op is resolved first; if any anchor is stale,
+  ambiguous, or overlaps another op, nothing is written. Each op carries a receipt
+  (its resolved line, that line's pre-image, and the anchor) so a stranger can
+  recompute the anchor and confirm the edit landed exactly where the plan said.
 - **`read_file` / `list_dir`**: confined to `--root`. `read_file` takes an
   optional `"hashed": true` for the anchored view above.
 - **`write_file`**: off by default; enabled with `--allow-write`; confined to `--root`.
