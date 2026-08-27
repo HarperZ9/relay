@@ -161,6 +161,32 @@ def test_config_from_env_off_without_token():
     assert cfg.allowed_origins == {"https://claude.ai", "https://chatgpt.com"}
 
 
+def test_behind_a_tls_terminating_proxy_advertises_the_public_https_url():
+    # The Cloudflare Tunnel path runs relay as plain HTTP on localhost (no
+    # RELAY_TLS_*) while the public identity is the https tunnel hostname. OAuth
+    # discovery must advertise that public https URL, not the local http bind, or a
+    # phone connector cannot find the authorization server.
+    from relay.remote_oauth import (
+        authorization_server_endpoint,
+        protected_resource_endpoint,
+    )
+
+    cfg = config_from_env({
+        "RELAY_REMOTE_TOKEN": "t",
+        "RELAY_PUBLIC_URL": "https://relay.example.com",  # the Cloudflare tunnel hostname
+        "RELAY_OAUTH_CLIENT_ID": "cid", "RELAY_OAUTH_CLIENT_SECRET": "csecret",
+        "RELAY_OAUTH_SIGNING_SECRET": "sign", "RELAY_AUTHORIZE_PASSWORD": "pw",
+        "RELAY_OAUTH_REDIRECT_URIS": "https://claude.ai/api/mcp/auth_callback",
+    })
+    assert cfg.oauth is not None and cfg.oauth.base_url == "https://relay.example.com"
+    pr = json.loads(protected_resource_endpoint(cfg.oauth)[2])
+    assert pr["resource"] == "https://relay.example.com/mcp"
+    assert pr["authorization_servers"] == ["https://relay.example.com"]
+    md = json.loads(authorization_server_endpoint(cfg.oauth)[2])
+    assert md["authorization_endpoint"] == "https://relay.example.com/authorize"
+    assert md["token_endpoint"] == "https://relay.example.com/token"
+
+
 def test_empty_token_is_refused():
     try:
         RemoteMcpConfig(token="")
