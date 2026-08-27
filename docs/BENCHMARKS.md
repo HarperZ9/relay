@@ -30,12 +30,20 @@ The integrity benchmark measures exactly that.
 ## The edit-format self-run (a borrowed claim becomes an owned receipt)
 
 Content-hash line edits are reported elsewhere to cut output tokens and lift edit
-success. Rather than cite that number, relay will measure its own: score and
-output tokens per edit format (whole-file, search-replace, hashline) on relay's
-own task set, with each run's hash-chained ledger attached as the evidence file.
+success. Rather than cite that number, relay will measure its own: apply-success
+and output tokens per edit format across the four relay ships, whole-file
+(`write_file`), search-replace (`edit_file`), hash-anchored (`edit_lines` /
+`edit_plan`), and fail-closed unified-diff (`apply_diff`), on relay's own task
+set, with each run's hash-chained ledger attached as the evidence file.
 
-Honest null: this run is pending. No uplift is claimed until the measurement
-exists, and the methodology, not the conclusion, is what is committed today.
+The apply layer is built and tested; the numbers are what wait. Each format's
+applier already fails closed rather than fuzzing, so the axis the run measures is
+whether a given model emits an edit the applier accepts, not whether a fuzzy match
+papers over a near miss.
+
+Honest null: this run is pending. It needs a live model backend to produce the
+per-format numbers, and none is attached here, so no uplift is claimed. The
+methodology and the four appliers, not a conclusion, are what is committed today.
 
 ## An honest SWE-bench slice
 

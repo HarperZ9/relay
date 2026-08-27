@@ -52,6 +52,10 @@ A missing credential just drops that tier from the ladder.
   ambiguous, or overlaps another op, nothing is written. Each op carries a receipt
   (its resolved line, that line's pre-image, and the anchor) so a stranger can
   recompute the anchor and confirm the edit landed exactly where the plan said.
+- **`apply_diff`**: applies a unified diff to one file, fail-closed. A hunk whose
+  context does not match the current file exactly is refused with nothing written,
+  so a model that emits diffs gets the same no-silent-misapply guarantee. Unlike a
+  fuzzy applier, drift is a refusal, not a wrong-place edit.
 - **`read_file` / `list_dir`**: confined to `--root`. `read_file` takes an
   optional `"hashed": true` for the anchored view above.
 - **`write_file`**: off by default; enabled with `--allow-write`; confined to `--root`.

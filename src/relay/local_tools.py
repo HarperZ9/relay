@@ -26,6 +26,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from .hashline import annotate_hashed, as_lines, resolve_anchor
+from .tools_prompt import TOOLS_SYSTEM  # re-exported: `from .local_tools import TOOLS_SYSTEM`
 
 _TOOL_LINE = re.compile(r"^\s*TOOL\s+(\w+)\s+(\{.*\})\s*$")
 
@@ -33,7 +34,7 @@ _TOOL_LINE = re.compile(r"^\s*TOOL\s+(\w+)\s+(\{.*\})\s*$")
 # integrity, review, bisect, cert, claim-grounding, the witnessed diff) checks
 # membership here, so a new write tool is registered in a single place and
 # cannot become a blind spot in one guard while the others still cover it.
-WRITE_TOOLS = frozenset({"write_file", "edit_file", "edit_lines", "edit_plan"})
+WRITE_TOOLS = frozenset({"write_file", "edit_file", "edit_lines", "edit_plan", "apply_diff"})
 
 
 def edited_targets(name: str, args: dict) -> list:
@@ -48,6 +49,10 @@ def edited_targets(name: str, args: dict) -> list:
         return [(str(op["path"]), op.get("new", ""))
                 for op in args.get("ops", [])
                 if isinstance(op, dict) and op.get("path")]
+    if name == "apply_diff" and args.get("path"):        # scan only the added lines
+        added = "\n".join(ln[1:] for ln in str(args.get("diff", "")).splitlines()
+                          if ln.startswith("+") and not ln.startswith("+++"))
+        return [(str(args["path"]), added)]
     return []
 
 # Commands refused even when exec is allowed. Not a security boundary against a
@@ -257,6 +262,27 @@ class ToolExecutor:
         return True, (f"edit_plan applied {len(ops)} ops across {len(writes)} file(s)\n"
                       + json.dumps({"receipt": receipt}, sort_keys=True))
 
+    def _t_apply_diff(self, args) -> "tuple[bool, str]":
+        """Apply a unified diff to one file, fail-closed: each hunk's context and
+        removed lines must match the current file exactly, or the whole patch is
+        refused (no fuzz). A model that emits diffs gets the anchored-edit guarantee."""
+        from .udiff import apply_udiff, parse_hunks
+        p = _safe_path(self.root, args.get("path", ""))
+        if p is None:
+            return False, "[error] path escapes root"
+        if not str(args.get("diff", "")).strip():
+            return False, "[error] apply_diff needs a non-empty 'diff'"
+        hunks, err = parse_hunks(args["diff"])
+        if err:
+            return False, f"[error] {err}"
+        with open(p, encoding="utf-8") as f:
+            new, err = apply_udiff(f.read(), hunks)
+        if err:
+            return False, f"[error] {err}"
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(new)
+        return True, f"applied {len(hunks)} hunk(s) to {args.get('path')}"
+
     def _t_repo_map(self, args) -> "tuple[bool, str]":
         from .local_repomap import build_repo_map
         sub = _safe_path(self.root, args.get("path", "."))
@@ -272,29 +298,3 @@ class ToolExecutor:
                               text=True, timeout=120)
         out = (proc.stdout or "") + (proc.stderr or "")
         return proc.returncode == 0, f"[exit {proc.returncode}]\n{out}"
-
-
-TOOLS_SYSTEM = (
-    "You can use tools by emitting lines in this exact format (one per line):\n"
-    'TOOL repo_map {"path": "."}\n'
-    'TOOL read_file {"path": "<path>"}\n'
-    'TOOL read_file {"path": "<path>", "hashed": true}\n'
-    'TOOL list_dir {"path": "<path>"}\n'
-    'TOOL edit_file {"path": "<path>", "old": "<exact text>", "new": "<replacement>"}\n'
-    'TOOL edit_lines {"path": "<path>", "at": "<anchor>", "new": "<replacement>"}\n'
-    'TOOL edit_plan {"ops": [{"path": "<path>", "at": "<anchor>", "new": "<text>"}, ...]}\n'
-    'TOOL write_file {"path": "<path>", "content": "<text>"}\n'
-    'TOOL run {"cmd": "<shell command>"}\n'
-    "Prefer repo_map then read_file to locate code. To change a file, read it with "
-    '"hashed": true first: every line comes back as <8hex>|<line>, and the 8-hex '
-    "prefix is that line's anchor. Then edit by anchor: edit_lines with 'at' "
-    "replaces one line, 'at' plus 'end' replaces the inclusive block, 'after' "
-    "inserts below a line, and an empty 'new' deletes. A stale anchor is refused, "
-    "so you never repeat a line's full text and never land on the wrong line. To "
-    "change several files or spots at once, use edit_plan with an 'ops' list: one "
-    "all-or-nothing batch, refused whole if any anchor is stale. Use "
-    "edit_file (its 'old' text must be unique) when you did not take a hashed read. "
-    "After you receive the tool results, continue. When you have the final answer "
-    "and need no more tools, reply with the answer and DO NOT emit any TOOL line. "
-    "Keep tool use minimal."
-)
