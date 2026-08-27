@@ -25,10 +25,19 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import urllib.parse
 from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .local_mcp import PROTOCOL, handle as _default_handle
+from .remote_oauth import (
+    OAuthSettings,
+    access_token_ok,
+    authorization_server_endpoint,
+    authorize_endpoint,
+    protected_resource_endpoint,
+    token_endpoint,
+)
 
 _MAX_BODY = 1 << 20  # 1 MiB request-body cap
 _ENDPOINT = "/mcp"
@@ -46,6 +55,7 @@ class RemoteMcpConfig:
         allowed_origins=frozenset(),
         allow_remote_exec: bool = False,
         handle: Callable[[dict], dict | None] | None = None,
+        oauth: OAuthSettings | None = None,
     ) -> None:
         if not token:
             raise ValueError("a non-empty bearer token is required for the remote surface")
@@ -53,18 +63,48 @@ class RemoteMcpConfig:
         self.allowed_origins = frozenset(allowed_origins)
         self.allow_remote_exec = allow_remote_exec
         self.handle = handle or _default_handle
+        # When set, /mcp also accepts an OAuth access token this server issued, and
+        # the /authorize, /token, and .well-known discovery endpoints are served, so
+        # a phone MCP connector can drive the agent. The static bearer keeps working
+        # (the local PC / Flywheel path uses it).
+        self.oauth = oauth
+
+
+def _oauth_from_env(env: Mapping[str, str]) -> OAuthSettings | None:
+    """Build OAuthSettings when the full OAuth env is present, else None (the
+    surface then runs with the static bearer only, for the local/PC path)."""
+    from .oauth import RegisteredClient
+
+    client_id = env.get("RELAY_OAUTH_CLIENT_ID")
+    client_secret = env.get("RELAY_OAUTH_CLIENT_SECRET")
+    signing = env.get("RELAY_OAUTH_SIGNING_SECRET")
+    base_url = env.get("RELAY_PUBLIC_URL")
+    approve = env.get("RELAY_AUTHORIZE_PASSWORD")
+    redirects = {r.strip() for r in env.get("RELAY_OAUTH_REDIRECT_URIS", "").split(",") if r.strip()}
+    if not (client_id and client_secret and signing and base_url and approve and redirects):
+        return None
+    return OAuthSettings(
+        client=RegisteredClient(client_id, client_secret, frozenset(redirects)),
+        signing_secret=signing,
+        base_url=base_url,
+        authorize_password=approve,
+    )
 
 
 def config_from_env(env: Mapping[str, str] | None = None) -> RemoteMcpConfig | None:
     """Build a RemoteMcpConfig from the environment, or None when
-    RELAY_REMOTE_TOKEN is unset (the remote surface stays off by default)."""
+    RELAY_REMOTE_TOKEN is unset (the remote surface stays off by default). When
+    the RELAY_OAUTH_* vars are also present, the OAuth phone-connector flow is on."""
     env = os.environ if env is None else env
     token = env.get("RELAY_REMOTE_TOKEN")
     if not token:
         return None
     origins = {o.strip() for o in env.get("RELAY_ALLOWED_ORIGINS", "").split(",") if o.strip()}
     exec_ok = env.get("RELAY_ALLOW_REMOTE_EXEC", "").lower() in ("1", "true", "yes")
-    return RemoteMcpConfig(token=token, allowed_origins=origins, allow_remote_exec=exec_ok)
+    return RemoteMcpConfig(
+        token=token, allowed_origins=origins, allow_remote_exec=exec_ok,
+        oauth=_oauth_from_env(env),
+    )
 
 
 def _json(status: int, obj) -> tuple[int, dict, bytes]:
@@ -76,6 +116,16 @@ def _bearer_ok(authorization: str | None, token: str) -> bool:
     if not authorization or not authorization.startswith(prefix):
         return False
     return hmac.compare_digest(authorization[len(prefix):].strip(), token)
+
+
+def _authorized(cfg: "RemoteMcpConfig", authorization: str | None) -> bool:
+    """Accept the static bearer (the local/PC path) or, when OAuth is configured,
+    a valid OAuth access token this server issued (the phone-connector path)."""
+    if _bearer_ok(authorization, cfg.token):
+        return True
+    if cfg.oauth is not None and authorization and authorization.startswith("Bearer "):
+        return access_token_ok(cfg.oauth, authorization[len("Bearer "):].strip())
+    return False
 
 
 def _apply_remote_posture(cfg: RemoteMcpConfig, req: dict) -> None:
@@ -101,8 +151,13 @@ def process(
     origin = headers.get("origin")
     if cfg.allowed_origins and origin is not None and origin not in cfg.allowed_origins:
         return _json(403, {"error": "origin not allowed"})
-    if not _bearer_ok(headers.get("authorization"), cfg.token):
-        return _json(401, {"error": "missing or invalid bearer token"})
+    if not _authorized(cfg, headers.get("authorization")):
+        out = {"Content-Type": "application/json"}
+        if cfg.oauth is not None:
+            # RFC 9728: point the client at the protected-resource metadata so it
+            # can discover the authorization server and start the OAuth flow.
+            out["WWW-Authenticate"] = f'Bearer resource_metadata="{cfg.oauth.resource_metadata_url}"'
+        return 401, out, json.dumps({"error": "missing or invalid bearer token"}).encode("utf-8")
     if method == "GET":
         # relay offers no server-initiated SSE stream on the endpoint yet
         return 405, {"Allow": "POST"}, b""
@@ -130,16 +185,33 @@ def process(
 def make_handler(cfg: RemoteMcpConfig):
     class _Handler(BaseHTTPRequestHandler):
         def _dispatch(self, method: str) -> None:
-            if self.path.split("?", 1)[0] != _ENDPOINT:
-                self._send(*_json(404, {"error": f"no endpoint {self.path!r}; use {_ENDPOINT}"}))
-                return
+            raw = self.path
+            path = raw.split("?", 1)[0]
             length = int(self.headers.get("Content-Length") or 0)
             if length > _MAX_BODY:
                 self._send(*_json(413, {"error": "request body too large"}))
                 return
             body = self.rfile.read(length) if length else b""
             lower = {k.lower(): v for k, v in self.headers.items()}
-            self._send(*process(cfg, method, lower, body))
+            if cfg.oauth is not None:
+                if method == "GET" and path == "/.well-known/oauth-protected-resource":
+                    self._send(*protected_resource_endpoint(cfg.oauth))
+                    return
+                if method == "GET" and path == "/.well-known/oauth-authorization-server":
+                    self._send(*authorization_server_endpoint(cfg.oauth))
+                    return
+                if method == "GET" and path == "/authorize":
+                    query = dict(urllib.parse.parse_qsl(raw.split("?", 1)[1] if "?" in raw else ""))
+                    self._send(*authorize_endpoint(cfg.oauth, lower, query))
+                    return
+                if method == "POST" and path == "/token":
+                    form = dict(urllib.parse.parse_qsl(body.decode("utf-8", "replace")))
+                    self._send(*token_endpoint(cfg.oauth, lower, form))
+                    return
+            if path == _ENDPOINT:
+                self._send(*process(cfg, method, lower, body))
+                return
+            self._send(*_json(404, {"error": f"no endpoint {path!r}; use {_ENDPOINT}"}))
 
         def do_POST(self) -> None:
             self._dispatch("POST")
@@ -182,7 +254,8 @@ def main() -> int:
     server = serve(cfg, host, port)
     print(f"relay remote MCP on http://{host}:{port}{_ENDPOINT} "
           f"(exec {'on' if cfg.allow_remote_exec else 'off'}, "
-          f"origins {'any' if not cfg.allowed_origins else len(cfg.allowed_origins)})")
+          f"origins {'any' if not cfg.allowed_origins else len(cfg.allowed_origins)}, "
+          f"oauth {'on' if cfg.oauth is not None else 'off'})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
