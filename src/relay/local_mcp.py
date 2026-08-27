@@ -35,6 +35,12 @@ TOOLS = [
                      "properties": {"goal": {"type": "string"}, "root": {"type": "string"},
                                     "allow_write": {"type": "boolean"}, "allow_exec": {"type": "boolean"},
                                     "max_steps": {"type": "integer"}, **_ONLINE}}},
+    {"name": "relay.status",
+     "description": "Liveness and identity of the relay MCP server (name, version, protocol). Network-free, for a fast health probe.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "relay.doctor",
+     "description": "Readiness diagnostic: identity plus the local model tiers configured (serve, ollama) and the tools exposed. Network-free; use local_agent_health to actually ping tiers.",
+     "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -75,6 +81,12 @@ def _call(params: dict) -> dict:
             return _text({"final": r["final"], "steps": r["steps"],
                           "verified": r["verified"], "final_answer": r["final_answer"],
                           "chain_ok": r["chain_ok"], "checkpoint": r["checkpoint"]})
+        if name in ("relay.status", "relay.doctor"):
+            info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL}
+            if name == "relay.doctor":
+                info["local_tiers"] = [type(b).__name__ for b in available_backends()]
+                info["tools"] = [t["name"] for t in TOOLS]
+            return _text(info)
         return {"content": [{"type": "text", "text": f"unknown tool {name!r}"}], "isError": True}
     except Exception as e:
         return {"content": [{"type": "text", "text": f"[error] {type(e).__name__}: {e}"}],

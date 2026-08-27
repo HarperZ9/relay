@@ -23,7 +23,8 @@ def _req(method, rid=1, params=None):
 def test_initialize_and_tools_list():
     assert handle(_req("initialize"))["result"]["serverInfo"]["name"] == "local-agent"
     tools = {t["name"] for t in handle(_req("tools/list"))["result"]["tools"]}
-    assert tools == {"local_agent_health", "local_agent_chat", "local_agent_run"}
+    assert tools == {"local_agent_health", "local_agent_chat", "local_agent_run",
+                     "relay.status", "relay.doctor"}
 
 
 def test_run_tool_description_does_not_overclaim_exec_sandbox():
@@ -66,3 +67,24 @@ def test_serve_loop_roundtrips():
     out = io.StringIO()
     serve(stdin=stdin, stdout=out)
     assert json.loads(out.getvalue())["result"]["serverInfo"]["name"] == "local-agent"
+
+
+def test_relay_status_and_doctor_are_healthy_network_free():
+    # The Flywheel lane probe marks a lane LIVE only if its MCP server answers a
+    # status/doctor tool. relay.status is a network-free liveness+identity check.
+    status = handle(_req("tools/call", params={"name": "relay.status"}))
+    body = json.loads(status["result"]["content"][0]["text"])
+    assert body["ok"] is True and body["server"] == "relay"
+    assert body["version"] and body["protocol"]
+    assert status["result"].get("isError") is not True
+
+    doctor = handle(_req("tools/call", params={"name": "relay.doctor"}))
+    dbody = json.loads(doctor["result"]["content"][0]["text"])
+    assert dbody["ok"] is True
+    assert "ServeBackend" in dbody["local_tiers"]  # configured local tiers, no ping
+    assert "relay.status" in dbody["tools"]
+
+
+def test_health_tools_are_advertised():
+    names = {t["name"] for t in handle(_req("tools/list"))["result"]["tools"]}
+    assert {"relay.status", "relay.doctor"} <= names
