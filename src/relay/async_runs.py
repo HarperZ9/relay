@@ -14,6 +14,7 @@ the oldest run records; a still-running loop is bounded by its own max_steps.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -21,11 +22,12 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .local_session import SessionLedger
+from .local_session import Entry, SessionLedger
 
 RUNNING = "running"
 DONE = "done"
 ERROR = "error"
+INTERRUPTED = "interrupted"   # a run whose worker was lost to a restart
 
 
 @dataclass
@@ -51,12 +53,66 @@ class RunRegistry:
     """Thread-safe registry of background agent runs; bounded and self-evicting."""
 
     def __init__(self, *, clock: Callable[[], int] = _now,
-                 id_source: Callable[[], str] = _hex_id, max_runs: int = 64) -> None:
+                 id_source: Callable[[], str] = _hex_id, max_runs: int = 64,
+                 run_root: "str | None" = None) -> None:
         self._runs: OrderedDict[str, _Run] = OrderedDict()
         self._lock = threading.Lock()
         self._clock = clock
         self._id_source = id_source
         self._max_runs = max_runs
+        # With a run_root, records persist so a phone's run_id survives a restart:
+        # a finished run is fetchable again, and a run cut off mid-flight is honestly
+        # reloaded as INTERRUPTED with whatever it had witnessed.
+        self._run_root = run_root
+        if run_root:
+            os.makedirs(run_root, exist_ok=True)
+            self._load_all()
+
+    def _path(self, run_id: str) -> str:
+        return os.path.join(self._run_root, f"{run_id}.json")
+
+    def _persist(self, run: _Run) -> None:
+        if not self._run_root:
+            return
+        rec = {"run_id": run.run_id, "state": run.state, "result": run.result,
+               "error": run.error, "started": run.started, "finished": run.finished,
+               "ledger_jsonl": run.ledger.to_jsonl()}
+        tmp = self._path(run.run_id) + ".tmp"
+        for _ in range(6):
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(rec, f)
+                os.replace(tmp, self._path(run.run_id))   # atomic swap
+                return
+            except OSError:
+                # a transient lock (a racing reader on Windows) is retried; persistence
+                # stays best-effort and never breaks the run if the disk is unavailable.
+                time.sleep(0.02)
+
+    def _load_all(self) -> None:
+        loaded: list[_Run] = []
+        for name in sorted(os.listdir(self._run_root)):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(self._run_root, name), encoding="utf-8") as f:
+                    rec = json.load(f)
+            except (OSError, ValueError):
+                continue
+            led = SessionLedger()
+            for line in (rec.get("ledger_jsonl") or "").splitlines():
+                if line.strip():
+                    led.entries.append(Entry(**json.loads(line)))
+            state = rec.get("state")
+            if state == RUNNING:               # the worker that ran it is gone
+                state = INTERRUPTED
+            loaded.append(_Run(rec.get("run_id", name[:-5]), led, state=state,
+                               result=rec.get("result"), error=rec.get("error"),
+                               started=rec.get("started", 0), finished=rec.get("finished")))
+        loaded.sort(key=lambda r: r.started)   # oldest first, so eviction keeps the newest
+        with self._lock:
+            for r in loaded[-self._max_runs:]:
+                self._runs[r.run_id] = r
 
     def start(self, work: Callable[[SessionLedger], dict]) -> str:
         """Run ``work(ledger)`` in a daemon thread; return its run_id at once.
@@ -67,7 +123,13 @@ class RunRegistry:
         with self._lock:
             self._runs[run_id] = run
             while len(self._runs) > self._max_runs:
-                self._runs.popitem(last=False)  # evict the oldest record
+                old_id, _ = self._runs.popitem(last=False)  # evict the oldest record
+                if self._run_root:
+                    try:
+                        os.remove(self._path(old_id))
+                    except OSError:
+                        pass
+        self._persist(run)
         threading.Thread(target=self._execute, args=(run, work), daemon=True).start()
         return run_id
 
@@ -82,6 +144,7 @@ class RunRegistry:
         finally:
             with self._lock:
                 run.finished = self._clock()
+            self._persist(run)   # the finished run survives a restart, fetchable again
 
     def _get(self, run_id: str) -> _Run | None:
         with self._lock:
@@ -114,4 +177,19 @@ class RunRegistry:
                     "note": "still running; poll local_agent_status"}
         if run.state == ERROR:
             return {"run_id": run_id, "state": ERROR, "error": run.error}
+        if run.state == INTERRUPTED:
+            return {"run_id": run_id, "state": INTERRUPTED,
+                    "note": "interrupted by a restart; the witnessed ledger is partial"}
         return {"run_id": run_id, "state": DONE, "result": run.result}
+
+    def list(self, *, limit: int = 20) -> dict:
+        """Recent runs, newest first, so a phone that lost its run_id can find it
+        again after a restart. Each row carries state, timing, and the step count."""
+        with self._lock:
+            runs = list(self._runs.values())
+        runs.sort(key=lambda r: r.started, reverse=True)
+        rows = [{"run_id": r.run_id, "state": r.state, "started": r.started,
+                 "finished": r.finished,
+                 "steps": sum(1 for e in r.ledger.entries if e.kind == "assistant")}
+                for r in runs[:limit]]
+        return {"runs": rows, "count": len(rows)}

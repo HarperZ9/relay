@@ -8,6 +8,7 @@ witnessed ledger. Zero-dep stdio JSON-RPC 2.0, the shape every flagship speaks.
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 from .async_runs import RunRegistry
@@ -20,8 +21,9 @@ PROTOCOL = "2025-06-18"
 __version__ = "0.1.0"
 
 # Background runs, so a phone can start a long agentic task and poll it instead of
-# holding one blocking HTTP request open across a flaky mobile network.
-RUNS = RunRegistry()
+# holding one blocking HTTP request open across a flaky mobile network. With
+# RELAY_RUN_ROOT set, runs persist so a run_id survives a server restart.
+RUNS = RunRegistry(run_root=os.environ.get("RELAY_RUN_ROOT") or None)
 
 _ONLINE = {"online": {"type": "boolean", "description": "include codex/claude/gemini/deepseek"}}
 _RUN_ID = {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "string"}}}
@@ -51,6 +53,9 @@ TOOLS = [
     {"name": "local_agent_result",
      "description": "The verified final answer and ledger checkpoint of a background run once it is done; reports 'running' until then.",
      "inputSchema": _RUN_ID},
+    {"name": "local_agent_runs",
+     "description": "List recent background runs (newest first) with state, timing, and step count, so a phone that lost a run_id after a restart can find it again. Persisted runs (RELAY_RUN_ROOT) survive a restart; a run cut off mid-flight lists as 'interrupted'.",
+     "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}}},
     {"name": "relay.status",
      "description": "Liveness and identity of the relay MCP server (name, version, protocol). Network-free, for a fast health probe.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -116,6 +121,8 @@ def _call(params: dict) -> dict:
             return _text(RUNS.status(args["run_id"]))
         if name == "local_agent_result":
             return _text(RUNS.result(args["run_id"]))
+        if name == "local_agent_runs":
+            return _text(RUNS.list(limit=int(args.get("limit", 20))))
         if name in ("relay.status", "relay.doctor"):
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL}
             if name == "relay.doctor":
