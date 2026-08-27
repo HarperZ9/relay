@@ -44,6 +44,13 @@ def witnessed_diff(ledger) -> str:
             if args.get("end"):
                 span = f"{args.get('at')}..{args['end']}"
             blocks.append(f"--- {args['path']} (edited @{span}) ---\n+ {args.get('new', '')}")
+        elif name == "edit_plan":
+            for op in args.get("ops", []):
+                if isinstance(op, dict) and op.get("path"):
+                    span = op.get("at") or op.get("after") or "?"
+                    if op.get("end"):
+                        span = f"{op.get('at')}..{op['end']}"
+                    blocks.append(f"--- {op['path']} (edited @{span}) ---\n+ {op.get('new', '')}")
     return "\n\n".join(blocks)
 
 

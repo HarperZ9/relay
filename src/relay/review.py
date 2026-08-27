@@ -21,13 +21,12 @@ from __future__ import annotations
 
 import json
 
-from .local_tools import WRITE_TOOLS
+from .local_tools import edited_targets
 
 RUN_SCHEMA = "relay.run-review/v1"
 RISK_SCHEMA = "relay.risk-review/v1"
 
 _READ_TOOLS = {"read_file"}
-_WRITE_TOOLS = WRITE_TOOLS
 
 
 def _field(entry, name, default=None):
@@ -62,8 +61,9 @@ def run_review(entries: list) -> dict:
             name, args = _parse_call(_field(entry, "content", ""))
             if name in _READ_TOOLS and args.get("path"):
                 reads.add(str(args["path"]))
-            elif name in _WRITE_TOOLS and args.get("path"):
-                writes.append((order, str(args["path"]), str(args["path"]) in reads))
+            else:
+                for path, _new in edited_targets(name, args):
+                    writes.append((order, path, path in reads))
         elif kind == "tool_result":
             meta = _field(entry, "meta", {}) or {}
             content = _field(entry, "content", "") or ""
@@ -145,14 +145,6 @@ def _tier(risk: float) -> str:
     return "high" if risk >= 0.55 else "elevated" if risk >= 0.3 else "low"
 
 
-def _edit_content(name: str, args: dict) -> "tuple | None":
-    if name == "write_file" and args.get("path"):
-        return str(args["path"]), args.get("content", "")
-    if name in ("edit_file", "edit_lines") and args.get("path"):
-        return str(args["path"]), args.get("new", "")
-    return None
-
-
 def risk_review(entries: list) -> dict:
     """Project the ledger's edits into risk rows plus the demands table."""
     edits = []
@@ -160,14 +152,11 @@ def risk_review(entries: list) -> dict:
         if _field(entry, "kind", "") != "tool_call":
             continue
         name, args = _parse_call(_field(entry, "content", ""))
-        hit = _edit_content(name, args)
-        if hit is None:
-            continue
-        path, text = hit
-        sig = _signals(text)
-        risk = _risk(sig)
-        edits.append({"path": path, "tool": name, **sig,
-                      "risk": risk, "tier": _tier(risk)})
+        for path, text in edited_targets(name, args):
+            sig = _signals(text)
+            risk = _risk(sig)
+            edits.append({"path": path, "tool": name, **sig,
+                          "risk": risk, "tier": _tier(risk)})
     demands = [
         {"path": e["path"], "tier": e["tier"],
          "requires": "stronger receipt: an acceptance check covering this edit"}

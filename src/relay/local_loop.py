@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .local_agent import BackendError
 from .local_session import SessionLedger
-from .local_tools import TOOLS_SYSTEM, WRITE_TOOLS, ToolExecutor, parse_tool_calls
+from .local_tools import TOOLS_SYSTEM, ToolExecutor, edited_targets, parse_tool_calls
 from .messages_api import recompute_receipt_id
 
 _CHECK_TIMEOUT = 600   # an acceptance check (a test/build suite) may be slow
@@ -211,13 +211,13 @@ def witnessed_edit_paths(ledger: SessionLedger) -> list:
         if e.kind != "tool_call":
             continue
         name, _, rest = e.content.partition(" ")
-        if name not in WRITE_TOOLS:
-            continue
         try:
             args = json.loads(rest)
         except json.JSONDecodeError:
             continue
-        p = args.get("path")
-        if p and p not in paths:
-            paths.append(p)
+        if not isinstance(args, dict):
+            continue
+        for p, _new in edited_targets(name, args):
+            if p not in paths:
+                paths.append(p)
     return paths
