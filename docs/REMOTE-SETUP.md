@@ -105,8 +105,8 @@ already lists both.
 
 ## Known limitations
 
-- **Access tokens do not refresh yet.** A phone session ends at the access-token
-  lifetime and you re-do the consent. Refresh-token support is the next increment.
+- **Sessions refresh automatically** (OAuth refresh tokens, 30-day, rotated on
+  use), so a phone session survives past the 1-hour access-token lifetime.
 - **Cert renewal needs a process restart** — the launcher's restart loop handles
   it; a hard kill loses that.
 - **CGNAT has no no-VPS fix** for the Claude path — a public IP from your ISP is

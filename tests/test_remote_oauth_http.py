@@ -162,3 +162,21 @@ def test_handler_routes_discovery_and_mcp_401_over_socket():
         server.shutdown()
         server.server_close()
         t.join(timeout=5)
+
+
+def test_token_endpoint_refresh_grant_and_client_auth():
+    o = _oauth()
+    _, h, _ = _authorize(o)
+    code = _code_from(h["Location"])
+    _, _, b = token_endpoint(o, {}, {
+        "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
+        "client_secret": "csecret", "code_verifier": VERIFIER})
+    refresh = json.loads(b)["refresh_token"]
+
+    s, _, b2 = token_endpoint(o, {}, {
+        "grant_type": "refresh_token", "refresh_token": refresh, "client_secret": "csecret"})
+    assert s == 200 and json.loads(b2)["access_token"]
+
+    s2, _, b3 = token_endpoint(o, {}, {
+        "grant_type": "refresh_token", "refresh_token": refresh, "client_secret": "WRONG"})
+    assert s2 == 401 and json.loads(b3)["error"] == "invalid_client"

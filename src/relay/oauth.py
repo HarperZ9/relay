@@ -62,23 +62,36 @@ def verify_pkce(code_verifier: str, code_challenge: str) -> bool:
 
 # --- access tokens (opaque to the client, HMAC-signed for the resource server) ---
 
-def issue_access_token(
-    *, subject: str, secret: str, now: int, ttl: int = 3600, scope: str = "mcp", nonce: str
-) -> str:
-    """Mint a signed, expiring bearer token: ``base64url(payload).base64url(sig)``.
+REFRESH_TTL = 2592000  # 30 days -- a refresh token outlives many access tokens
 
-    Opaque to the client (it just presents it as a Bearer). The resource server
-    validates it with ``verify_access_token`` and the same secret. ``nonce`` makes
-    two tokens for the same subject/instant distinct (jti)."""
-    payload = {"sub": subject, "iat": now, "exp": now + ttl, "scope": scope, "jti": nonce}
+
+def _issue(*, subject: str, secret: str, now: int, ttl: int, scope: str, nonce: str, typ: str) -> str:
+    payload = {"sub": subject, "iat": now, "exp": now + ttl, "scope": scope, "jti": nonce, "typ": typ}
     body = _b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     sig = _b64url(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
     return f"{body}.{sig}"
 
 
-def verify_access_token(token: str, secret: str, *, now: int) -> dict:
-    """Return the token's claims, or raise InvalidToken. Signature is checked in
-    constant time before the payload is trusted; expiry is checked against ``now``."""
+def issue_access_token(
+    *, subject: str, secret: str, now: int, ttl: int = 3600, scope: str = "mcp", nonce: str
+) -> str:
+    """Mint a signed, expiring access token (typ=access): ``base64url(payload).sig``.
+
+    Opaque to the client (it presents it as a Bearer); the resource server
+    validates it with ``verify_access_token``. ``nonce`` is the jti."""
+    return _issue(subject=subject, secret=secret, now=now, ttl=ttl, scope=scope, nonce=nonce, typ="access")
+
+
+def issue_refresh_token(
+    *, subject: str, secret: str, now: int, ttl: int = REFRESH_TTL, scope: str = "mcp", nonce: str
+) -> str:
+    """Mint a long-lived refresh token (typ=refresh). Exchanged at /token for a
+    fresh access token so a phone session survives past the access TTL without a
+    new consent."""
+    return _issue(subject=subject, secret=secret, now=now, ttl=ttl, scope=scope, nonce=nonce, typ="refresh")
+
+
+def _verify(token: str, secret: str, *, now: int, expected_typ: str) -> dict:
     try:
         body, sig = token.split(".", 1)
     except ValueError:
@@ -92,9 +105,18 @@ def verify_access_token(token: str, secret: str, *, now: int) -> dict:
         raise InvalidToken("undecodable payload")
     if not isinstance(claims, dict) or "exp" not in claims:
         raise InvalidToken("missing exp")
+    if claims.get("typ") != expected_typ:
+        raise InvalidToken(f"expected a {expected_typ} token")
     if now >= int(claims["exp"]):
         raise InvalidToken("expired")
     return claims
+
+
+def verify_access_token(token: str, secret: str, *, now: int) -> dict:
+    """Return an access token's claims, or raise InvalidToken. A refresh token is
+    rejected here (typ check). Signature is checked in constant time before the
+    payload is trusted; expiry against ``now``."""
+    return _verify(token, secret, now=now, expected_typ="access")
 
 
 # --- authorization-code flow against a pre-registered client ---
@@ -197,7 +219,25 @@ def exchange_token(
     if not verify_pkce(code_verifier or "", entry.code_challenge):
         raise OAuthError("invalid_grant", "PKCE verification failed")
     access = issue_access_token(subject=client.client_id, secret=secret, now=now, ttl=ttl, nonce=nonce)
-    return {"access_token": access, "token_type": "Bearer", "expires_in": ttl, "scope": "mcp"}
+    refresh = issue_refresh_token(subject=client.client_id, secret=secret, now=now, nonce=nonce + "r")
+    return {"access_token": access, "token_type": "Bearer", "expires_in": ttl,
+            "refresh_token": refresh, "scope": "mcp"}
+
+
+def refresh_grant(refresh_token: str, *, secret: str, now: int, nonce: str, ttl: int = 3600) -> dict:
+    """Exchange a valid refresh token for a fresh access token (and a rotated
+    refresh token), or raise OAuthError. The refresh token's signature, type, and
+    expiry are checked; the caller (token_endpoint) verifies the client secret."""
+    try:
+        claims = _verify(refresh_token, secret, now=now, expected_typ="refresh")
+    except InvalidToken as exc:
+        raise OAuthError("invalid_grant", str(exc))
+    subject = str(claims.get("sub", ""))
+    scope = str(claims.get("scope", "mcp"))
+    access = issue_access_token(subject=subject, secret=secret, now=now, ttl=ttl, scope=scope, nonce=nonce)
+    rotated = issue_refresh_token(subject=subject, secret=secret, now=now, scope=scope, nonce=nonce + "r")
+    return {"access_token": access, "token_type": "Bearer", "expires_in": ttl,
+            "refresh_token": rotated, "scope": scope}
 
 
 # --- discovery metadata a connector reads ---
@@ -220,7 +260,7 @@ def authorization_server_metadata(issuer: str) -> dict:
         "authorization_endpoint": f"{issuer}/authorize",
         "token_endpoint": f"{issuer}/token",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
         "scopes_supported": ["mcp"],

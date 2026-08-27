@@ -9,8 +9,10 @@ from relay.oauth import (
     authorize,
     exchange_token,
     issue_access_token,
+    issue_refresh_token,
     pkce_challenge,
     protected_resource_metadata,
+    refresh_grant,
     verify_access_token,
     verify_pkce,
 )
@@ -162,5 +164,42 @@ def test_authorization_server_metadata_advertises_s256_code_only():
     assert md["authorization_endpoint"] == "https://pc.example/authorize"
     assert md["token_endpoint"] == "https://pc.example/token"
     assert md["code_challenge_methods_supported"] == ["S256"]
-    assert md["grant_types_supported"] == ["authorization_code"]
+    assert md["grant_types_supported"] == ["authorization_code", "refresh_token"]
     assert md["response_types_supported"] == ["code"]
+
+
+# --- refresh tokens ---
+
+def test_exchange_returns_a_refresh_token():
+    store = AuthCodeStore()
+    store.put(_authorize().auth_code)
+    resp = exchange_token(
+        CLIENT, store, grant_type="authorization_code", code="authcode-1",
+        redirect_uri="https://claude.ai/api/mcp/auth_callback", client_secret="client-shhh",
+        code_verifier=VERIFIER, secret=SECRET, now=1100, nonce="tok")
+    assert resp["access_token"] and resp["refresh_token"]
+
+
+def test_refresh_grant_issues_new_rotated_access():
+    rt = issue_refresh_token(subject="cid", secret=SECRET, now=1000, nonce="r0")
+    resp = refresh_grant(rt, secret=SECRET, now=2000, nonce="r1")
+    assert resp["token_type"] == "Bearer"
+    assert verify_access_token(resp["access_token"], SECRET, now=2100)["sub"] == "cid"
+    assert resp["refresh_token"] != rt  # rotated on use
+
+
+def test_access_and_refresh_tokens_are_not_interchangeable():
+    at = issue_access_token(subject="s", secret=SECRET, now=1000, nonce="a")
+    with pytest.raises(OAuthError):
+        refresh_grant(at, secret=SECRET, now=1100, nonce="x")  # access used as a refresh
+    rt = issue_refresh_token(subject="s", secret=SECRET, now=1000, nonce="r")
+    with pytest.raises(InvalidToken):
+        verify_access_token(rt, SECRET, now=1100)  # refresh used as an access token
+
+
+def test_expired_or_tampered_refresh_is_invalid_grant():
+    rt = issue_refresh_token(subject="s", secret=SECRET, now=1000, ttl=10, nonce="r")
+    with pytest.raises(OAuthError):
+        refresh_grant(rt, secret=SECRET, now=1011, nonce="x")  # expired
+    with pytest.raises(OAuthError):
+        refresh_grant(rt + "junk", secret=SECRET, now=1005, nonce="x")  # bad signature

@@ -33,6 +33,7 @@ from .oauth import (
     authorize,
     exchange_token,
     protected_resource_metadata,
+    refresh_grant,
     verify_access_token,
 )
 
@@ -138,8 +139,21 @@ def token_endpoint(
     oauth: OAuthSettings, headers: Mapping[str, str], form: Mapping[str, str]
 ) -> tuple[int, dict, bytes]:
     """The token endpoint. The connector exchanges its code + PKCE verifier +
-    client secret (form body or HTTP Basic) for a signed access token."""
+    client secret for a signed access token (grant_type=authorization_code), or a
+    refresh token for a fresh access token (grant_type=refresh_token). The client
+    secret may arrive in the form body or via HTTP Basic."""
     client_secret = form.get("client_secret") or _basic_client_secret(headers.get("authorization")) or ""
+    if form.get("grant_type") == "refresh_token":
+        if not hmac.compare_digest(client_secret, oauth.client.client_secret):
+            return _oauth_error(OAuthError("invalid_client"))
+        try:
+            refreshed = refresh_grant(
+                form.get("refresh_token", ""), secret=oauth.signing_secret,
+                now=oauth.clock(), nonce=oauth.id_source(), ttl=oauth.access_ttl,
+            )
+        except OAuthError as exc:
+            return _oauth_error(exc)
+        return _json(200, refreshed)
     try:
         response = exchange_token(
             oauth.client,
