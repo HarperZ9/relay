@@ -21,6 +21,8 @@ import hashlib
 import json
 from dataclasses import dataclass
 
+from .local_tools import WRITE_TOOLS
+
 _SKIP_CALLS = {"pytest.skip", "pytest.xfail", "unittest.skip", "unittest.SkipTest",
                "pytest.importorskip"}
 _EXIT_CALLS = {"sys.exit", "os._exit", "exit", "quit"}
@@ -136,7 +138,7 @@ def trajectory_integrity(ledger, *, protected=DEFAULT_PROTECTED) -> list:
         if not parsed:
             continue
         name, args = parsed
-        if name not in ("edit_file", "write_file"):
+        if name not in WRITE_TOOLS:
             continue
         where = f"seq {getattr(e, 'seq', '?')}"
         path = str(args.get("path", ""))

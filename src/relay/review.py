@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import json
 
+from .local_tools import WRITE_TOOLS
+
 RUN_SCHEMA = "relay.run-review/v1"
 RISK_SCHEMA = "relay.risk-review/v1"
 
 _READ_TOOLS = {"read_file"}
-_WRITE_TOOLS = {"write_file", "edit_file"}
+_WRITE_TOOLS = WRITE_TOOLS
 
 
 def _field(entry, name, default=None):
@@ -146,7 +148,7 @@ def _tier(risk: float) -> str:
 def _edit_content(name: str, args: dict) -> "tuple | None":
     if name == "write_file" and args.get("path"):
         return str(args["path"]), args.get("content", "")
-    if name == "edit_file" and args.get("path"):
+    if name in ("edit_file", "edit_lines") and args.get("path"):
         return str(args["path"]), args.get("new", "")
     return None
 

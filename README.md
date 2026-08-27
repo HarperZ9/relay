@@ -42,7 +42,13 @@ A missing credential just drops that tier from the ladder.
   C#/Swift/PHP/Ruby via patterns) so the model finds the right file.
 - **`edit_file`**: precise search/replace where the target must match exactly
   once, so an ambiguous edit is refused, not guessed.
-- **`read_file` / `list_dir`**: confined to `--root`.
+- **`edit_lines`**: hash-anchored edits. A `read_file` with `"hashed": true`
+  returns every line as `<8hex>|<line>`, and the model edits by that anchor
+  instead of by repeating the line. It is compact, and an anchor computed against
+  a stale view will not match, so a mismatched edit fails closed rather than
+  landing on the wrong line.
+- **`read_file` / `list_dir`**: confined to `--root`. `read_file` takes an
+  optional `"hashed": true` for the anchored view above.
 - **`write_file`**: off by default; enabled with `--allow-write`; confined to `--root`.
 - **`run`**: off by default; enabled with `--allow-exec`. A shell can write, so
   `--allow-exec` implies write, and unlike the file tools `run` is not confined to

@@ -22,6 +22,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from .local_tools import WRITE_TOOLS
+
 SCHEMA = "relay.claim-grounding/v1"
 GROUNDED, UNGROUNDED, REFUTED, UNVERIFIABLE = "GROUNDED", "UNGROUNDED", "REFUTED", "UNVERIFIABLE"
 
@@ -78,7 +80,7 @@ def _witnessed_edits(ledger) -> set:
         if getattr(e, "kind", "") != "tool_call":
             continue
         name, _, rest = (getattr(e, "content", "") or "").partition(" ")
-        if name not in ("write_file", "edit_file"):
+        if name not in WRITE_TOOLS:
             continue
         try:
             args = json.loads(rest) if rest else {}

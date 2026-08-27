@@ -25,7 +25,15 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 
+from .hashline import annotate_hashed, as_lines, resolve_anchor
+
 _TOOL_LINE = re.compile(r"^\s*TOOL\s+(\w+)\s+(\{.*\})\s*$")
+
+# The file-writing tools, named once. Every accountability guard (the gate,
+# integrity, review, bisect, cert, claim-grounding, the witnessed diff) checks
+# membership here, so a new write tool is registered in a single place and
+# cannot become a blind spot in one guard while the others still cover it.
+WRITE_TOOLS = frozenset({"write_file", "edit_file", "edit_lines"})
 
 # Commands refused even when exec is allowed. Not a security boundary against a
 # determined operator — a guardrail against a small model wrecking the tree.
@@ -59,7 +67,7 @@ class ToolGate:
             self.allow_write = True
 
     def check(self, name: str, args: dict) -> "str | None":
-        if name in ("write_file", "edit_file") and not self.allow_write:
+        if name in WRITE_TOOLS and not self.allow_write:
             return "write disabled (pass --allow-write)"
         if name in ("run",):
             if not self.allow_exec:
@@ -120,7 +128,10 @@ class ToolExecutor:
         if p is None:
             return False, "[error] path escapes root"
         with open(p, encoding="utf-8", errors="replace") as f:
-            return True, f.read()
+            body = f.read()
+        if args.get("hashed"):
+            return True, annotate_hashed(body)   # opt-in; default read is unchanged
+        return True, body
 
     def _t_list_dir(self, args) -> "tuple[bool, str]":
         p = _safe_path(self.root, args.get("path", "."))
@@ -157,6 +168,53 @@ class ToolExecutor:
             f.write(body.replace(old, new, 1))
         return True, f"edited {args.get('path')} (1 replacement)"
 
+    def _t_edit_lines(self, args) -> "tuple[bool, str]":
+        """Hash-anchored edit. Address lines by the anchors a `hashed` read emits
+        instead of by repeating their text:
+            replace one line    -> {"path", "at": "<anchor>", "new": "..."}
+            replace a block      -> {"path", "at": "<start>", "end": "<stop>", "new": "..."}
+            insert after a line  -> {"path", "after": "<anchor>", "new": "..."}
+            delete               -> an empty "new" with "at" (or "at" + "end")
+        An anchor computed against a stale view will not match, so a mismatched
+        edit is refused rather than landing on the wrong line."""
+        p = _safe_path(self.root, args.get("path", ""))
+        if p is None:
+            return False, "[error] path escapes root"
+        at, end, after = args.get("at"), args.get("end"), args.get("after")
+        if not at and not after:
+            return False, "[error] edit_lines needs 'at' (replace) or 'after' (insert)"
+        new = args.get("new", "")
+        with open(p, encoding="utf-8") as f:
+            lines = f.read().splitlines(keepends=True)
+
+        if after:
+            i, err = resolve_anchor(lines, after)
+            if err:
+                return False, err
+            if not lines[i].endswith(("\n", "\r")):     # keep a separator at EOF
+                lines[i] += "\n"
+            lines[i + 1:i + 1] = as_lines(new, "\n")
+            msg = f"insert after {after}"
+        else:
+            i, err = resolve_anchor(lines, at)
+            if err:
+                return False, err
+            j = i
+            if end:
+                j, err = resolve_anchor(lines, end)
+                if err:
+                    return False, err
+                if j < i:
+                    return False, "[error] 'end' anchor precedes 'at'"
+            nl = "\n" if lines[j].endswith("\n") else ""   # preserve a no-EOL final line
+            lines[i:j + 1] = as_lines(new, nl)
+            span = at if j == i else f"{at}..{end}"
+            msg = f"{'delete' if new == '' else 'replace'} {span}"
+
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("".join(lines))
+        return True, f"edited {args.get('path')} ({msg})"
+
     def _t_repo_map(self, args) -> "tuple[bool, str]":
         from .local_repomap import build_repo_map
         sub = _safe_path(self.root, args.get("path", "."))
@@ -178,12 +236,20 @@ TOOLS_SYSTEM = (
     "You can use tools by emitting lines in this exact format (one per line):\n"
     'TOOL repo_map {"path": "."}\n'
     'TOOL read_file {"path": "<path>"}\n'
+    'TOOL read_file {"path": "<path>", "hashed": true}\n'
     'TOOL list_dir {"path": "<path>"}\n'
     'TOOL edit_file {"path": "<path>", "old": "<exact text>", "new": "<replacement>"}\n'
+    'TOOL edit_lines {"path": "<path>", "at": "<anchor>", "new": "<replacement>"}\n'
     'TOOL write_file {"path": "<path>", "content": "<text>"}\n'
     'TOOL run {"cmd": "<shell command>"}\n'
-    "Prefer repo_map then read_file to locate code, and edit_file (the 'old' text "
-    "must be unique) over write_file for changes. After you receive the tool "
-    "results, continue. When you have the final answer and need no more tools, "
-    "reply with the answer and DO NOT emit any TOOL line. Keep tool use minimal."
+    "Prefer repo_map then read_file to locate code. To change a file, read it with "
+    '"hashed": true first: every line comes back as <8hex>|<line>, and the 8-hex '
+    "prefix is that line's anchor. Then edit by anchor: edit_lines with 'at' "
+    "replaces one line, 'at' plus 'end' replaces the inclusive block, 'after' "
+    "inserts below a line, and an empty 'new' deletes. A stale anchor is refused, "
+    "so you never repeat a line's full text and never land on the wrong line. Use "
+    "edit_file (its 'old' text must be unique) when you did not take a hashed read. "
+    "After you receive the tool results, continue. When you have the final answer "
+    "and need no more tools, reply with the answer and DO NOT emit any TOOL line. "
+    "Keep tool use minimal."
 )

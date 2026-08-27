@@ -24,6 +24,7 @@ import json
 
 from .claim_grounding import ground_final_answer
 from .contract import STRICT, Contract, evaluate
+from .local_tools import WRITE_TOOLS
 from .integrity import integrity_report, trajectory_integrity
 from .intent_audit import audit_intent
 from .local_loop import verify_receipts
@@ -49,7 +50,7 @@ def _edited_paths(ledger) -> list:
         if getattr(e, "kind", "") != "tool_call":
             continue
         name, args = _parse_call(getattr(e, "content", ""))
-        if name in ("write_file", "edit_file") and args.get("path"):
+        if name in WRITE_TOOLS and args.get("path"):
             out.append(str(args["path"]))
     return out
 

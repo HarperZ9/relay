@@ -39,6 +39,11 @@ def witnessed_diff(ledger) -> str:
         elif name == "edit_file" and args.get("path"):
             blocks.append(f"--- {args['path']} (edited) ---\n"
                           f"- {args.get('old', '')}\n+ {args.get('new', '')}")
+        elif name == "edit_lines" and args.get("path"):
+            span = args.get("at") or args.get("after") or "?"
+            if args.get("end"):
+                span = f"{args.get('at')}..{args['end']}"
+            blocks.append(f"--- {args['path']} (edited @{span}) ---\n+ {args.get('new', '')}")
     return "\n\n".join(blocks)
 
 

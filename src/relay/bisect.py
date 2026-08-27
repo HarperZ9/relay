@@ -22,10 +22,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .local_tools import ToolExecutor, ToolGate
+from .local_tools import WRITE_TOOLS, ToolExecutor, ToolGate
 
 SCHEMA = "relay.bisect/v1"
-_EDIT_TOOLS = ("write_file", "edit_file")
+_EDIT_TOOLS = WRITE_TOOLS
 _CHECK_TIMEOUT = 600
 
 
