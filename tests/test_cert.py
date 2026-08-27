@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from relay.approvals import call_hash
 from relay.cert import emit_cert, verify_cert
 from relay.contract import STRICT, Clause, Contract
 from relay.local_session import SessionLedger
@@ -121,3 +122,58 @@ def test_claim_grounded_clause_refutes_a_lying_summary():
     cert = emit_cert({"ledger": led}, contract, env_hash="x")
     label, detail = verify_cert(cert)
     assert label == "REFUTED" and "refutes" in detail
+
+
+# --- per-step approval clause, in-tree and offline ---
+
+_GATED = Contract((Clause("chain_intact"), Clause("steps_approved")))
+
+
+def _gated_result():
+    led = SessionLedger()
+    led.append("user", "bump the version")
+    args = {"path": "version.py", "old": "1", "new": "2"}
+    led.append("approval", call_hash("edit_file", args), {"tool": "edit_file", "decision": "allow"})
+    led.append("tool_call", f"edit_file {json.dumps(args, sort_keys=True)}")
+    led.append("tool_result", "edited version.py", {"tool": "edit_file", "ok": True})
+    led.append("assistant", "Bumped the version.")
+    return {"ledger": led}
+
+
+def _ungated_result():
+    led = SessionLedger()
+    led.append("user", "bump the version")
+    led.append("approval", call_hash("edit_file", {"path": "other.py"}), {"decision": "allow"})
+    led.append("tool_call", 'edit_file {"path": "version.py", "new": "2"}')   # no matching approval
+    led.append("tool_result", "edited version.py", {"tool": "edit_file", "ok": True})
+    led.append("assistant", "done")
+    return {"ledger": led}
+
+
+def test_steps_approved_contract_allows_a_gated_run(tmp_path):
+    cert = emit_cert(_gated_result(), _GATED, env_hash="x")
+    assert cert["verdict"] == "ALLOW"
+    out, code = _standalone(cert, tmp_path)
+    assert out.startswith("ALLOW") and code == 0
+
+
+def test_steps_approved_contract_refutes_an_ungated_mutation(tmp_path):
+    cert = emit_cert(_ungated_result(), _GATED, env_hash="x")
+    assert cert["verdict"] == "REFUTED"
+    out, code = _standalone(cert, tmp_path)
+    assert out.startswith("REFUTED") and code == 1
+
+
+def test_standalone_verifier_now_catches_a_protected_edit_via_edit_lines(tmp_path):
+    # Regression: the vendored verifier once only knew write_file/edit_file, so a
+    # protected-test edit via a newer tool slipped through as ALLOW. It must REFUTE.
+    led = SessionLedger()
+    led.append("user", "make tests pass")
+    led.append("tool_call", 'edit_lines {"path": "tests/test_core.py", "at": "abc", "new": "pass"}')
+    led.append("tool_result", "edited tests/test_core.py", {"tool": "edit_lines", "ok": True})
+    led.append("check", "[exit 0]\n1 passed", {"cmd": "pytest -q", "ok": True})
+    led.append("assistant", "All tests pass now.")
+    cert = emit_cert({"ledger": led}, STRICT, env_hash="x")
+    assert cert["verdict"] == "REFUTED"                    # in-tree flags the gamed grader
+    out, code = _standalone(cert, tmp_path)
+    assert out.startswith("REFUTED") and code == 1         # the offline verifier now agrees

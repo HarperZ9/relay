@@ -16,7 +16,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .local_agent import BackendError
 from .local_session import SessionLedger
-from .local_tools import TOOLS_SYSTEM, ToolExecutor, edited_targets, parse_tool_calls
+from .approvals import call_hash, is_mutating
+from .local_tools import (TOOLS_SYSTEM, ToolExecutor, ToolResult, edited_targets,
+                          parse_tool_calls)
 from .messages_api import recompute_receipt_id
 
 _CHECK_TIMEOUT = 600   # an acceptance check (a test/build suite) may be slow
@@ -37,9 +39,37 @@ def _execute_calls(executor, calls: list) -> list:
     return [executor.execute(name, args) for name, args in calls]
 
 
+def _approve_calls(approve, calls: list, ledger) -> list:
+    """Record an allow/deny approval for each mutating call before it runs, bound to
+    the call's content hash. Returns an allow mask; read-only calls are always allowed
+    and get no entry, so a read-only turn is unchanged."""
+    mask = []
+    for name, args in calls:
+        if not is_mutating(name):
+            mask.append(True)
+            continue
+        allow = bool(approve(name, args))
+        ledger.append("approval", call_hash(name, args),
+                      {"tool": name, "decision": "allow" if allow else "deny"})
+        mask.append(allow)
+    return mask
+
+
+def _execute_masked(executor, calls: list, mask: list) -> list:
+    """Execute only the approved calls (via the same read-parallel path) and slot a
+    rejection result in for each denied call, preserving original order."""
+    approved = iter(_execute_calls(executor, [c for c, ok in zip(calls, mask) if ok]))
+    out = []
+    for (name, args), ok in zip(calls, mask):
+        out.append(next(approved) if ok else
+                   ToolResult(name, args, False, "[approval] operator rejected this call"))
+    return out
+
+
 def run_agent(agent, goal: str, executor: ToolExecutor,
               ledger: "SessionLedger | None" = None, *, max_steps: int = 6,
-              check: "str | None" = None, test_cmd: "str | None" = None) -> dict:
+              check: "str | None" = None, test_cmd: "str | None" = None,
+              approve=None) -> dict:
     """Run the goal to completion (or max_steps). Returns the final answer, the
     step count, and the ledger checkpoint + verdict.
 
@@ -93,7 +123,10 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
                          check_passed=_run_acceptance(check, executor, ledger))
 
         observations = []
-        results = _execute_calls(executor, calls)
+        if approve is None:
+            results = _execute_calls(executor, calls)     # headless: unchanged path
+        else:
+            results = _execute_masked(executor, calls, _approve_calls(approve, calls, ledger))
         for (name, args), res in zip(calls, results):
             ledger.append("tool_call", f"{name} {json.dumps(args, sort_keys=True)}")
             ledger.append("tool_result", res.output, {"tool": name, "ok": res.ok})
@@ -137,6 +170,7 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
 
 def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
           check_passed: "bool | None" = None, note: str = "") -> dict:
+    from .approvals import approval_verdict
     from .claim_grounding import ground_final_answer
     from .integrity import integrity_report, trajectory_integrity
     from .intent_audit import audit_intent
@@ -172,6 +206,9 @@ def _done(final: str, steps: int, ledger: SessionLedger, *, final_answer: bool,
             # GROUNDED / UNGROUNDED / REFUTED / UNVERIFIABLE -- a lying summary over an
             # intact chain is caught here.
             "grounded": ground_final_answer(ledger)["verdict"],
+            # per-step approval: were the mutating steps gated by a decision bound to
+            # their exact bytes? GATED / UNGATED / NOT_GATED (no approvals recorded).
+            "approved": approval_verdict(ledger),
             # ACCEPTED = a verified trajectory whose acceptance check did not fail AND
             # whose pass was not gamed by tampering with the check. No check -> collapses
             # to `verified`; a failed OR tampered pass is never accepted.

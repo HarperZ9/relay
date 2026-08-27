@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from .approvals import approval_verdict
 from .claim_grounding import ground_final_answer
 from .contract import STRICT, Contract, evaluate
 from .local_tools import edited_targets
@@ -78,6 +79,7 @@ def derive_facts(ledger) -> dict:
         "reviewability": run_review(ledger.entries)["reviewability"],
         "edited_paths": _edited_paths(ledger),
         "grounding_verdict": ground_final_answer(ledger)["verdict"],
+        "approval_verdict": approval_verdict(ledger),
     }
 
 

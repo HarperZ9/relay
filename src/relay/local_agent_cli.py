@@ -152,6 +152,26 @@ def _write_cert(args, result) -> None:
           f"verify offline: python verify_cert.py {args.cert}]", file=sys.stderr)
 
 
+def _stdin_approver():
+    """An approve(name, args) that asks the operator on stderr and reads stdin. A
+    reply starting with 'y' allows; anything else denies. On EOF (non-interactive
+    stdin) it denies, so an unattended --interactive run never auto-approves."""
+    import json as _json
+
+    def approve(name, args):
+        preview = _json.dumps(args, sort_keys=True)
+        if len(preview) > 300:
+            preview = preview[:300] + "..."
+        sys.stderr.write(f"[approve] {name} {preview}\n  allow? [y/N] ")
+        sys.stderr.flush()
+        try:
+            reply = input()
+        except EOFError:
+            return False
+        return reply.strip().lower().startswith("y")
+    return approve
+
+
 def _run_agentic(args) -> int:
     if not args.prompt:
         print("[error] --agent needs a task prompt", file=sys.stderr)
@@ -168,7 +188,8 @@ def _run_agentic(args) -> int:
     ledger = SessionLedger()
     result = run_agent(agent, _context_preamble(args.file) + args.prompt, executor, ledger,
                        max_steps=args.max_steps, check=args.check or None,
-                       test_cmd=args.test_cmd or None)
+                       test_cmd=args.test_cmd or None,
+                       approve=_stdin_approver() if getattr(args, "interactive", False) else None)
     print(result["final"])
     if args.save:
         ledger.save(args.save)
@@ -299,6 +320,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined")
+    ap.add_argument("--interactive", action="store_true",
+                    help="with --agent, prompt for approval before every mutating tool call "
+                    "(write/edit/run); each decision is recorded as a hash-chained approval "
+                    "entry bound to the call's bytes, so the .rvc proves a human gated it")
     ap.add_argument("--no-repo-map", action="store_true", dest="no_repo_map",
                     help="skip auto-folding a bounded repo map (--root) into the system prompt "
                     "(--agent/--watch only); the model can still call the repo_map tool itself")

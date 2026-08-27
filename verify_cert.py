@@ -71,18 +71,57 @@ def _match(path, globs):
                or fnmatch.fnmatch(norm, "*/" + g) for g in globs)
 
 
+_WRITE = ("write_file", "edit_file", "edit_lines", "edit_plan", "apply_diff")
+
+
+def _edited_targets(name, args):
+    """The (path, new_text) pairs a write call touches. Mirrors relay's edited_targets
+    in pure stdlib so this verifier covers every edit tool, not just the first two."""
+    if name == "write_file" and args.get("path"):
+        return [(args["path"], str(args.get("content") or ""))]
+    if name in ("edit_file", "edit_lines") and args.get("path"):
+        return [(args["path"], str(args.get("new") or ""))]
+    if name == "edit_plan":
+        return [(op["path"], str(op.get("new") or "")) for op in args.get("ops", [])
+                if isinstance(op, dict) and op.get("path")]
+    if name == "apply_diff" and args.get("path"):
+        added = "\n".join(ln[1:] for ln in str(args.get("diff") or "").splitlines()
+                          if ln.startswith("+") and not ln.startswith("+++"))
+        return [(args["path"], added)]
+    return []
+
+
+def _call_hash(name, args):
+    import hashlib
+    return hashlib.sha256(
+        ("%s %s" % (name, json.dumps(args, sort_keys=True))).encode("utf-8")).hexdigest()
+
+
+def _approval_verdict(rows):
+    decided, saw = {}, False
+    for row in rows:
+        if row["kind"] == "approval":
+            saw = True
+            decided[row["content"]] = (row.get("meta") or {}).get("decision")
+        elif row["kind"] == "tool_call":
+            name, args = _parse_call(row["content"])
+            if (name in _WRITE or name == "run") and _call_hash(name, args) not in decided:
+                return "UNGATED" if saw else "NOT_GATED"
+    return "GATED" if saw else "NOT_GATED"
+
+
 def _facts(rows):
     edited_protected, neutralized, claimed, prior_calls = [], False, 0, 0
-    check_passed = None
+    edited_paths, check_passed = [], None
     for row in rows:
         kind = row["kind"]
         if kind == "tool_call":
             prior_calls += 1
             name, args = _parse_call(row["content"])
-            if name in ("write_file", "edit_file"):
-                if _match(args.get("path", ""), _PROTECTED):
-                    edited_protected.append(args.get("path"))
-                body = str(args.get("new") or args.get("content") or "")
+            for path, body in _edited_targets(name, args):
+                edited_paths.append(path)
+                if _match(path, _PROTECTED):
+                    edited_protected.append(path)
                 if any(tok in body for tok in _NEUTRALIZE):
                     neutralized = True
         elif kind == "assistant" and prior_calls == 0:
@@ -94,8 +133,8 @@ def _facts(rows):
     integrity_clean = not edited_protected and not neutralized
     return {"integrity_clean": integrity_clean, "check_passed": check_passed,
             "check_trusted": check_passed is not True or integrity_clean,
-            "intent_critical": claimed, "edited_paths":
-            [_parse_call(r["content"])[1].get("path") for r in rows if r["kind"] == "tool_call"]}
+            "intent_critical": claimed, "edited_paths": edited_paths,
+            "approval_verdict": _approval_verdict(rows)}
 
 
 def _clause_ok(clause, facts):
@@ -111,6 +150,13 @@ def _clause_ok(clause, facts):
     if t == "no_edit":
         hit = [p for p in facts["edited_paths"] if p and _match(p, clause.get("arg") or [])]
         return (not hit), "no edit to protected paths" if not hit else "edited a protected path"
+    if t == "steps_approved":
+        v = facts["approval_verdict"]
+        if v == "UNGATED":
+            return False, "a mutating step ran without a matching approval"
+        if v == "NOT_GATED":
+            return None, "the run recorded no approvals; gating is unverifiable"
+        return True, "every mutating step carries a matching approval"
     return None, f"clause {t!r} not re-derivable by the standalone verifier"
 
 
