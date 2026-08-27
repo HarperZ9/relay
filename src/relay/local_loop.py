@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 from .local_agent import BackendError
 from .local_session import SessionLedger
@@ -19,6 +20,21 @@ from .local_tools import TOOLS_SYSTEM, ToolExecutor, parse_tool_calls
 from .messages_api import recompute_receipt_id
 
 _CHECK_TIMEOUT = 600   # an acceptance check (a test/build suite) may be slow
+
+# Side-effect-free tools: running them concurrently cannot race, so a turn that
+# emits several of them (read three files at once) is parallelized. Any mutating or
+# executing tool in the batch forces the whole turn to run sequentially and in order.
+READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "repo_map"})
+
+
+def _execute_calls(executor, calls: list) -> list:
+    """Execute a turn's tool calls, returning results in the ORIGINAL call order.
+    All-reads batches run in a thread pool (no side effects, no races); a batch with
+    any write/exec runs sequentially, so ordering and the gate are never weakened."""
+    if len(calls) > 1 and all(name in READ_ONLY_TOOLS for name, _ in calls):
+        with ThreadPoolExecutor(max_workers=min(len(calls), 8)) as pool:
+            return list(pool.map(lambda call: executor.execute(call[0], call[1]), calls))
+    return [executor.execute(name, args) for name, args in calls]
 
 
 def run_agent(agent, goal: str, executor: ToolExecutor,
@@ -77,8 +93,8 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
                          check_passed=_run_acceptance(check, executor, ledger))
 
         observations = []
-        for name, args in calls:
-            res = executor.execute(name, args)
+        results = _execute_calls(executor, calls)
+        for (name, args), res in zip(calls, results):
             ledger.append("tool_call", f"{name} {json.dumps(args, sort_keys=True)}")
             ledger.append("tool_result", res.output, {"tool": name, "ok": res.ok})
             observations.append(f"TOOL {name} -> {'ok' if res.ok else 'FAIL'}:\n{res.output}")
