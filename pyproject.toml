@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "A zero-dependency, accountable coding agent that runs on any model endpoint: local (served 14B/32B or Ollama) or online (codex/claude/gemini/deepseek via your own keys, subscription CLI, or gateway), with automatic failover, a gated tool loop, and a hash-chained re-verifiable session ledger."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "LicenseRef-FSL-1.1-MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Zain Dana Harper" }]
 keywords = ["coding-agent", "local-llm", "ollama", "llm-router", "failover", "mcp", "offline", "agent"]
 classifiers = [
     "Programming Language :: Python :: 3.11",
-    "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
