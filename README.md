@@ -65,7 +65,7 @@ def add(a, b):
 ```
 
 Each marker becomes its own agent goal with its own witnessed ledger, through the
-exact same gated tool loop as any other run — the model is told to remove the
+exact same gated tool loop as any other run. The model is told to remove the
 marker itself via `edit_file` once it has acted, so even a change you triggered by
 typing a comment, not a prompt, is never a bypass of the ledger. `--watch-marker`
 changes the trigger string; `--watch-interval` the poll period.
@@ -89,7 +89,7 @@ replacement. `--no-repo-map` opts out.
 This closes a real, verified gap in *what context the model has* (Copilot's
 agent mode does this too). It is not a claim about the small local model's
 tool-use reliability, which is a separate, already-known limitation (see
-Architect mode below) — live runs during development showed high run-to-run
+Architect mode below). Live runs during development showed high run-to-run
 variance in whether the model actually calls `edit_file` at all, on identical
 input, with and without the ambient map. That variance predates this change and
 is not attributed to it here.
@@ -162,6 +162,26 @@ each edit by mechanical signals (lines, nesting depth, branching, duplicate line
 a high-tier edit **demands** a stronger receipt. These are facts, never generated
 prose, so a surface can enforce them. Expert reviewers get the middle of the run, not
 just its ending.
+
+## The proof toolkit: five ways to check a run
+
+The witnessed ledger is the substrate for five checks a stranger can run offline.
+The full capability matrix and the honest nulls are in
+[docs/ACCOUNTABILITY.md](docs/ACCOUNTABILITY.md); the benchmark posture is in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+- **See it.** `relay --view run.jsonl` draws the run as a hash-chained timeline.
+  Flip one byte in the saved run and exactly one edge snaps red, verdict REFUTED.
+- **Certify it.** `--cert run.rvc` writes a few-KB proof-carrying certificate;
+  `python verify_cert.py run.rvc` re-derives ALLOW / UNVERIFIABLE / REFUTED offline,
+  no model and no re-execution, with zero dependencies.
+- **Select by proof.** `--best-of 8 --check "pytest -q"` runs the goal eight times
+  and keeps the verified winner. A run that passed by editing the grader ranks below
+  an honest run that scored higher.
+- **Localize a regression.** `--bisect run.jsonl --root <clean> --check "pytest -q"`
+  replays the witnessed edit set and names the first edit that broke the tests.
+- **Ground the summary.** relay checks the final answer against the ledger: a summary
+  that claims the tests pass over a failed check is REFUTED, even with an intact chain.
 
 ## Use from an agent (MCP)
 
