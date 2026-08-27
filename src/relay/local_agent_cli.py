@@ -174,6 +174,11 @@ def _run_agentic(args) -> int:
         ledger.save(args.save)
     if args.cert:
         _write_cert(args, result)
+    if args.review:
+        from .local_review_agent import review_run
+        rv = review_run(lambda: _build_agent(args), ledger)
+        detail = f" | {rv['findings'][:200]}" if rv.get("reviewed") else " (no edits)"
+        print(f"\n[review-agent | {rv['verdict']}{detail}]", file=sys.stderr)
     committed = ""
     if args.auto_commit:
         if result["accepted"]:
@@ -302,6 +307,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --agent, run the goal N times and select the VERIFIED winner "
                          "(chain intact, check not gamed, integrity clean), not a judge; --save "
                          "writes the hash-chained selection meta-ledger")
+    ap.add_argument("--review", action="store_true",
+                    help="with --agent, a fresh-context reviewer sees ONLY the diff (not the "
+                         "author's ledger) and returns an independent APPROVE/REQUEST_CHANGES")
     ap.add_argument("--check", default="",
                     help="an acceptance command (e.g. \"pytest -q\") run once after the "
                     "agent finishes; the run is accepted only if it passes, --auto-commit "
