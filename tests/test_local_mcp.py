@@ -24,7 +24,44 @@ def test_initialize_and_tools_list():
     assert handle(_req("initialize"))["result"]["serverInfo"]["name"] == "local-agent"
     tools = {t["name"] for t in handle(_req("tools/list"))["result"]["tools"]}
     assert tools == {"local_agent_health", "local_agent_chat", "local_agent_run",
+                     "local_agent_start", "local_agent_status", "local_agent_result",
                      "relay.status", "relay.doctor"}
+
+
+def test_background_run_start_status_result(monkeypatch):
+    # A phone starts a run and polls it. Stub run_agent so no live backend is
+    # needed; the tool wiring, the run_id handoff, and the result projection are
+    # what is under test.
+    import time
+
+    import relay.local_mcp as m
+
+    def fake_run_agent(agent, goal, ex, ledger, *, max_steps=6):
+        ledger.append("assistant", f"working on {goal}")
+        return {"final": "done", "steps": 1, "verified": True, "final_answer": True,
+                "chain_ok": True, "checkpoint": "abc123", "accepted": True, "ledger": ledger}
+
+    monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    start = handle(_req("tools/call", params={"name": "local_agent_start",
+                                              "arguments": {"goal": "fix the bug"}}))
+    body = json.loads(start["result"]["content"][0]["text"])
+    run_id = body["run_id"]
+    assert body["state"] == "running" and run_id
+
+    res = {"state": "running"}
+    for _ in range(400):
+        res = json.loads(handle(_req("tools/call", params={
+            "name": "local_agent_result", "arguments": {"run_id": run_id}}))["result"]["content"][0]["text"])
+        if res["state"] == "done":
+            break
+        time.sleep(0.005)
+    assert res["state"] == "done"
+    assert res["result"]["final"] == "done" and res["result"]["checkpoint"] == "abc123"
+    assert "ledger" not in res["result"]  # the non-serializable ledger object is not leaked
+
+    st = json.loads(handle(_req("tools/call", params={
+        "name": "local_agent_status", "arguments": {"run_id": run_id}}))["result"]["content"][0]["text"])
+    assert st["steps"] == 1 and st["state"] == "done"
 
 
 def test_run_tool_description_does_not_overclaim_exec_sandbox():

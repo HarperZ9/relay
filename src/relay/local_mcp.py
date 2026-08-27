@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 
+from .async_runs import RunRegistry
 from .local_agent import LocalAgent, available_backends, health_report
 from .local_loop import run_agent
 from .local_session import SessionLedger
@@ -18,7 +19,16 @@ from .local_tools import ToolExecutor, ToolGate
 PROTOCOL = "2025-06-18"
 __version__ = "0.1.0"
 
+# Background runs, so a phone can start a long agentic task and poll it instead of
+# holding one blocking HTTP request open across a flaky mobile network.
+RUNS = RunRegistry()
+
 _ONLINE = {"online": {"type": "boolean", "description": "include codex/claude/gemini/deepseek"}}
+_RUN_ID = {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "string"}}}
+_RUN_ARGS = {"type": "object", "required": ["goal"],
+             "properties": {"goal": {"type": "string"}, "root": {"type": "string"},
+                            "allow_write": {"type": "boolean"}, "allow_exec": {"type": "boolean"},
+                            "max_steps": {"type": "integer"}, **_ONLINE}}
 
 TOOLS = [
     {"name": "local_agent_health",
@@ -30,11 +40,17 @@ TOOLS = [
                      "properties": {"prompt": {"type": "string"},
                                     "backend": {"type": "string"}, **_ONLINE}}},
     {"name": "local_agent_run",
-     "description": "Run a gated agentic task; write/exec off unless allowed. File tools (read/list/write) are confined to root; run/exec sets only cwd, so an allowed shell is NOT path-confined and can reach outside root. allow_exec implies write (a shell can write). Returns the final answer and a verifiable ledger checkpoint.",
-     "inputSchema": {"type": "object", "required": ["goal"],
-                     "properties": {"goal": {"type": "string"}, "root": {"type": "string"},
-                                    "allow_write": {"type": "boolean"}, "allow_exec": {"type": "boolean"},
-                                    "max_steps": {"type": "integer"}, **_ONLINE}}},
+     "description": "Run a gated agentic task; write/exec off unless allowed. File tools (read/list/write) are confined to root; run/exec sets only cwd, so an allowed shell is NOT path-confined and can reach outside root. allow_exec implies write (a shell can write). Returns the final answer and a verifiable ledger checkpoint. BLOCKS until done -- for a phone or a flaky link, prefer local_agent_start.",
+     "inputSchema": _RUN_ARGS},
+    {"name": "local_agent_start",
+     "description": "Start a gated agentic task in the BACKGROUND and return a run_id at once (does not block). Same gate as local_agent_run (write/exec off unless allowed). Poll local_agent_status for live progress, then local_agent_result for the verified final answer. Use this from a phone or over a flaky network, where a blocking run would drop.",
+     "inputSchema": _RUN_ARGS},
+    {"name": "local_agent_status",
+     "description": "Progress of a background run: state (running/done/error), the step count so far, and the latest witnessed ledger entries.",
+     "inputSchema": _RUN_ID},
+    {"name": "local_agent_result",
+     "description": "The verified final answer and ledger checkpoint of a background run once it is done; reports 'running' until then.",
+     "inputSchema": _RUN_ID},
     {"name": "relay.status",
      "description": "Liveness and identity of the relay MCP server (name, version, protocol). Network-free, for a fast health probe.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -61,6 +77,20 @@ def _text(obj) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(obj, indent=2)}]}
 
 
+def _executor(args: dict) -> ToolExecutor:
+    return ToolExecutor(root=args.get("root", "."),
+                        gate=ToolGate(allow_write=bool(args.get("allow_write")),
+                                      allow_exec=bool(args.get("allow_exec"))))
+
+
+def _run_projection(r: dict) -> dict:
+    # verified is the honest composite (chain + re-derivable receipts + a real final
+    # answer), never the self-confirming in-memory chain check alone.
+    return {"final": r["final"], "steps": r["steps"], "verified": r["verified"],
+            "final_answer": r["final_answer"], "chain_ok": r["chain_ok"],
+            "checkpoint": r["checkpoint"]}
+
+
 def _call(params: dict) -> dict:
     name, args = params.get("name"), params.get("arguments", {}) or {}
     try:
@@ -71,16 +101,19 @@ def _call(params: dict) -> dict:
             return _text({"text": resp["content"][0]["text"], "backend": resp.get("backend"),
                           "receipt": resp.get("x_receipt", {}).get("receipt_id")})
         if name == "local_agent_run":
-            ex = ToolExecutor(root=args.get("root", "."),
-                              gate=ToolGate(allow_write=bool(args.get("allow_write")),
-                                            allow_exec=bool(args.get("allow_exec"))))
-            r = run_agent(_agent(args), args["goal"], ex, SessionLedger(),
+            r = run_agent(_agent(args), args["goal"], _executor(args), SessionLedger(),
                           max_steps=int(args.get("max_steps", 6)))
-            # verified is the honest composite (chain + re-derivable receipts + a real
-            # final answer), never the self-confirming in-memory chain check alone.
-            return _text({"final": r["final"], "steps": r["steps"],
-                          "verified": r["verified"], "final_answer": r["final_answer"],
-                          "chain_ok": r["chain_ok"], "checkpoint": r["checkpoint"]})
+            return _text(_run_projection(r))
+        if name == "local_agent_start":
+            agent, goal, ex = _agent(args), args["goal"], _executor(args)
+            steps = int(args.get("max_steps", 6))
+            run_id = RUNS.start(
+                lambda ledger: _run_projection(run_agent(agent, goal, ex, ledger, max_steps=steps)))
+            return _text({"run_id": run_id, "state": "running"})
+        if name == "local_agent_status":
+            return _text(RUNS.status(args["run_id"]))
+        if name == "local_agent_result":
+            return _text(RUNS.result(args["run_id"]))
         if name in ("relay.status", "relay.doctor"):
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL}
             if name == "relay.doctor":

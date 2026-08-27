@@ -138,6 +138,19 @@ def test_remote_exec_allowed_when_pc_opts_in():
     assert seen["req"]["params"]["arguments"]["allow_exec"] is True
 
 
+def test_background_start_also_has_exec_forced_off_by_default():
+    # local_agent_start carries the same exec risk as local_agent_run, so the
+    # remote posture must scrub it too -- otherwise the async path is an exec bypass.
+    seen, h = _capture()
+    cfg = _cfg(handle=h)  # allow_remote_exec defaults False
+    _post(cfg, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "local_agent_start",
+                           "arguments": {"goal": "x", "allow_exec": True, "allow_write": True}}})
+    args = seen["req"]["params"]["arguments"]
+    assert args["allow_exec"] is False
+    assert args["allow_write"] is True  # write stays a per-call opt-in
+
+
 # --- env config + real socket ---
 
 def test_config_from_env_off_without_token():

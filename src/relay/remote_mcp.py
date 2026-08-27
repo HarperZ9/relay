@@ -135,7 +135,7 @@ def _apply_remote_posture(cfg: RemoteMcpConfig, req: dict) -> None:
     if cfg.allow_remote_exec:
         return
     params = req.get("params") or {}
-    if req.get("method") == "tools/call" and params.get("name") == "local_agent_run":
+    if req.get("method") == "tools/call" and params.get("name") in ("local_agent_run", "local_agent_start"):
         args = params.get("arguments") or {}
         if args.get("allow_exec"):
             args["allow_exec"] = False
