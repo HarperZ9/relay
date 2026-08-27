@@ -210,6 +210,40 @@ def _run_agentic(args) -> int:
     return 0 if result["accepted"] else 1
 
 
+def _run_best_of(args) -> int:
+    import copy
+
+    from .verified_bon import select_best
+    if not args.prompt:
+        print("[error] --best-of needs a task prompt", file=sys.stderr)
+        return 2
+
+    def make_agent(seed):
+        scoped = copy.copy(args)
+        scoped.seed = seed
+        return _coding_agent(scoped)
+
+    if _live_backend(make_agent(args.seed)) is None:
+        print("[error] no local backend is healthy (start serve.py or ollama)", file=sys.stderr)
+        return 1
+
+    def make_executor():
+        return ToolExecutor(root=args.root,
+                            gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
+
+    sel = select_best(make_agent, _context_preamble(args.file) + args.prompt, make_executor,
+                      n=args.best_of, max_steps=args.max_steps, check=args.check or None,
+                      base_seed=args.seed)
+    win = sel["results"][sel["winner"]]
+    print(win["final"])
+    if args.save:
+        sel["meta_ledger"].save(args.save)
+    print(f"\n[best-of-{args.best_of} | winner=run{sel['winner']} | accepted={win['accepted']} | "
+          f"selection verified={sel['meta_ledger'].verify()} | order={sel['order']}"
+          f"{' | selection saved ' + args.save if args.save else ''}]", file=sys.stderr)
+    return 0 if win["accepted"] else 1
+
+
 def _run_watch(args) -> int:
     import time
 
@@ -264,6 +298,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip auto-folding a bounded repo map (--root) into the system prompt "
                     "(--agent/--watch only); the model can still call the repo_map tool itself")
     ap.add_argument("--max-steps", type=int, default=6, dest="max_steps")
+    ap.add_argument("--best-of", type=int, default=1, dest="best_of",
+                    help="with --agent, run the goal N times and select the VERIFIED winner "
+                         "(chain intact, check not gamed, integrity clean), not a judge; --save "
+                         "writes the hash-chained selection meta-ledger")
     ap.add_argument("--check", default="",
                     help="an acceptance command (e.g. \"pytest -q\") run once after the "
                     "agent finishes; the run is accepted only if it passes, --auto-commit "
@@ -342,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.watch:
         return _run_watch(args)
     if args.agent:
-        return _run_agentic(args)
+        return _run_best_of(args) if args.best_of and args.best_of > 1 else _run_agentic(args)
     if args.health:
         report = health_report(_all_backends(args))
         print(json.dumps(report, indent=2))
