@@ -98,6 +98,11 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
     green". It shares ``check``'s rich verdict (verified/accepted/integrity/review),
     so both surfaces report the same way; pass at most one of the two."""
     ledger = ledger if ledger is not None else SessionLedger()
+    # Resume: a non-empty ledger passed in is a saved session being continued. Seed
+    # the model's history from its transcript so the run picks up in context, and the
+    # new turns extend the same hash chain, so the resumed session stays re-verifiable.
+    if ledger.entries and hasattr(agent, "history"):
+        agent.history = [dict(m) for m in ledger.transcript()]
     if TOOLS_SYSTEM not in agent.system:
         agent.system = agent.system + "\n\n" + TOOLS_SYSTEM
 

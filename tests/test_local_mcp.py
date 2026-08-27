@@ -25,7 +25,8 @@ def test_initialize_and_tools_list():
     tools = {t["name"] for t in handle(_req("tools/list"))["result"]["tools"]}
     assert tools == {"local_agent_health", "local_agent_chat", "local_agent_run",
                      "local_agent_start", "local_agent_status", "local_agent_result",
-                     "local_agent_runs", "relay.status", "relay.doctor"}
+                     "local_agent_runs", "local_agent_sessions",
+                     "relay.status", "relay.doctor"}
 
 
 def test_background_run_start_status_result(monkeypatch):

@@ -56,6 +56,9 @@ TOOLS = [
     {"name": "local_agent_runs",
      "description": "List recent background runs (newest first) with state, timing, and step count, so a phone that lost a run_id after a restart can find it again. Persisted runs (RELAY_RUN_ROOT) survive a restart; a run cut off mid-flight lists as 'interrupted'.",
      "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}}},
+    {"name": "local_agent_sessions",
+     "description": "List saved relay sessions (witnessed ledgers under RELAY_SESSION_DIR) so a session started on the PC can be reopened from another device; each is re-verified on load. Pass session_id to get that session's transcript.",
+     "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}}},
     {"name": "relay.status",
      "description": "Liveness and identity of the relay MCP server (name, version, protocol). Network-free, for a fast health probe.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -123,6 +126,11 @@ def _call(params: dict) -> dict:
             return _text(RUNS.result(args["run_id"]))
         if name == "local_agent_runs":
             return _text(RUNS.list(limit=int(args.get("limit", 20))))
+        if name == "local_agent_sessions":
+            from .session_store import get_session, list_sessions
+            sdir = os.environ.get("RELAY_SESSION_DIR") or "."
+            sid = args.get("session_id")
+            return _text(get_session(sdir, sid) if sid else list_sessions(sdir))
         if name in ("relay.status", "relay.doctor"):
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL}
             if name == "relay.doctor":
