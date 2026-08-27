@@ -333,6 +333,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --cert, the acceptance contract to certify against (default: strict)")
     ap.add_argument("--verify-cert", default="", dest="verify_cert", metavar="RUN.rvc",
                     help="verify a .rvc certificate and print ALLOW/UNVERIFIABLE/REFUTED, then exit")
+    ap.add_argument("--bisect", default="", metavar="LEDGER.jsonl",
+                    help="git-bisect a saved run: replay its witnessed edits onto --root and "
+                         "localize the first edit that breaks --check (needs --root and --check)")
     ap.add_argument("--probe-injection", action="store_true", dest="probe_injection",
                     help="run the defensive prompt-injection robustness probe over the gated tool "
                          "loop and report containment (honors --allow-write/--allow-exec; runs in a "
@@ -377,6 +380,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"{label}  {detail}")
         return 0 if label == "ALLOW" else 1
+    if args.bisect:
+        import json as _json
+
+        from .bisect import bisect_run
+        from .local_session import SessionLedger
+        if not args.check:
+            print("[error] --bisect needs --check (the acceptance command)", file=sys.stderr)
+            return 2
+        try:
+            out = bisect_run(SessionLedger.load(args.bisect, verify=False), args.root, args.check)
+        except (OSError, ValueError) as e:
+            print(f"[error] {e}", file=sys.stderr)
+            return 1
+        print(_json.dumps(out, indent=2))
+        return 0 if out.get("first_bad_seq") is None else 1
     if args.watch:
         return _run_watch(args)
     if args.agent:
