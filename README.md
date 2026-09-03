@@ -231,6 +231,15 @@ and both outrank acceptance, so a clause the verifier cannot re-derive can never
 be rounded up to a pass. The exit code follows: zero on ALLOW, non-zero on either
 of the other two, which is what makes it usable as a check in someone else's CI.
 
+<p align="center"><img src="docs/art/clause-ladder.svg" alt="The eight clause types a relay acceptance contract may carry, one to a row, with whether the standalone verifier that ships inside every certificate can re-derive each one. chain_intact re-derives before any clause is read, so a flipped byte is refuted whether or not the contract asked. check_not_gamed, no_claimed_history, no_edit and steps_approved re-derive from the file alone: the ledger carries the edits, the reasoning and the approvals they read. tests_pass, reviewability and claim_grounded need the in-tree verifier, because they read per-turn receipts, a diff-level reviewability pass and a syntax-level scan that the vendored file does not carry. Those three report unverifiable rather than assuming they hold." width="100%"></p>
+
+Which clause sits in which row is not a matter of taste. Five of the eight
+re-derive from the certificate alone, because the ledger inside it carries the
+edits, the reasoning and the approvals those clauses read. The other three want
+the per-turn receipts, the diff-level reviewability pass, or the syntax-level
+scan for a reward hack, and none of those travel in the file. The vendored
+verifier names them unverifiable and stops there.
+
 ## Use from an agent (MCP)
 
 `relay --mcp` is a zero-dep stdio MCP server exposing `local_agent_health`,
