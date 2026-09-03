@@ -1,4 +1,4 @@
-<p align="center"><img src=".github/assets/zentropy-banner.png" alt="relay" width="100%"></p>
+<p align="center"><img src="docs/art/relay-header.svg" alt="relay: accountable coding agent. Every run leaves a certificate a stranger can check offline." width="100%"></p>
 
 # relay
 
@@ -18,6 +18,8 @@ relay --mcp                                # serve the agent to any MCP client
 
 ## Reaches every endpoint (with your own credentials)
 
+<p align="center"><img src="docs/art/endpoint-ladder.svg" alt="The endpoint ladder from prompt to cloud, with rungs tried in order and free tiers first." width="100%"></p>
+
 One ladder, tried in order, failing over on exhaustion or error, free/private
 tiers first so you only spend metered tokens when you have to:
 
@@ -33,6 +35,16 @@ Legitimate by construction: keys come from the environment, subscriptions from
 your own authenticated CLI, gateways from a base URL you set. Nothing is forged,
 no cover identity is minted, no session token is harvested, no billing is evaded.
 A missing credential just drops that tier from the ladder.
+
+One rule inside that is worth stating, because it is the difference between a
+gateway and a leak. A gateway rung points at an arbitrary base URL that you set,
+so it may use only its own dedicated `<PROVIDER>_PROVIDER_KEY`. It never falls
+back to that provider's official API key, because replaying your real credential
+to a third-party URL is exactly the failure the rung exists to avoid. With no
+provider key set, the gateway is called unauthenticated and the official secret
+stays where it is. A rung whose credential is absent is never added to the ladder
+in the first place, so a missing key is a shorter ladder rather than an error at
+call time.
 
 ## An actual coding agent, not a chat box
 
@@ -123,6 +135,8 @@ is not attributed to it here.
 
 ## The wedge: a provable run
 
+<p align="center"><img src="docs/art/accountability-lane.svg" alt="Eight stages from goal to certificate, ending in allow, refuted, or unverifiable." width="100%"></p>
+
 Every turn, tool call, and result is appended to a **hash-chained session
 ledger**. A saved run is tamper-evident: reload it and `verify()` re-derives the
 chain (a broken chain is refused, not loaded). With `--auto-commit`, relay stages
@@ -209,6 +223,13 @@ The full capability matrix and the honest nulls are in
   replays the witnessed edit set and names the first edit that broke the tests.
 - **Ground the summary.** relay checks the final answer against the ledger: a summary
   that claims the tests pass over a failed check is REFUTED, even with an intact chain.
+
+Those three verdicts are ordered, and the order is the point. `verify_cert.py`
+returns REFUTED first, UNVERIFIABLE next, and reaches ALLOW only when nothing
+earlier fired. A confirmed contradiction therefore outranks an inability to check,
+and both outrank acceptance, so a clause the verifier cannot re-derive can never
+be rounded up to a pass. The exit code follows: zero on ALLOW, non-zero on either
+of the other two, which is what makes it usable as a check in someone else's CI.
 
 ## Use from an agent (MCP)
 

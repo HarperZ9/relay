@@ -1,0 +1,140 @@
+{
+  "header": {
+    "name": "relay",
+    "role": "accountable coding agent",
+    "tagline": "Every run leaves a certificate a stranger can check offline.",
+    "words": [
+      "ladder",
+      "ledger",
+      "check",
+      "certify",
+      "refuse"
+    ]
+  },
+  "flows": [
+    {
+      "file": "accountability-lane.svg",
+      "kicker": "one run, handed to a stranger",
+      "title": "How a coding run becomes something you can check without trusting it",
+      "footnote": "Refuted outranks unverifiable, and both outrank allow. A doubt is never a pass.",
+      "alt": "Eight stages of an accountable coding run: goal, context, tool call, anchored edit, ledger, check, bisect, certificate. The goal is pinned as the first row of a hash-chained ledger. Project conventions and a bounded repo map fold into the prompt verbatim. Every tool call is permission-checked before it runs, and an anchored edit that does not match exactly once writes nothing. The acceptance check runs outside anything the model can call. A bisect replays the recorded edits until the check goes red, naming the first breaking edit. The certificate is a few kilobytes and re-derives with no model and no network. Three outcomes: allow, refuted, and unverifiable.",
+      "stages": [
+        {
+          "title": "Goal",
+          "note": "The task, pinned as the first row of the ledger."
+        },
+        {
+          "title": "Context",
+          "note": "Your conventions file and a bounded repo map, verbatim."
+        },
+        {
+          "title": "Tool call",
+          "note": "The model proposes; permission is checked before it runs."
+        },
+        {
+          "title": "Anchored edit",
+          "note": "The target must match once, or nothing is written."
+        },
+        {
+          "title": "Ledger",
+          "note": "Every turn, call, and result appends to a hash chain."
+        },
+        {
+          "title": "Check",
+          "note": "Your acceptance command, outside anything the model can call."
+        },
+        {
+          "title": "Bisect",
+          "note": "Replay the recorded edits until the check goes red."
+        },
+        {
+          "title": "Certificate",
+          "note": "A few kilobytes, re-derived with no model and no network."
+        }
+      ],
+      "returns": [
+        {
+          "from": 6,
+          "to": 5,
+          "label": "THE CHECK RUNS AGAIN ON EACH REPLAYED EDIT"
+        }
+      ],
+      "outcomes": [
+        {
+          "label": "ALLOW",
+          "note": "chain intact, receipts re-derive, contract met",
+          "tone": "verified"
+        },
+        {
+          "label": "REFUTED",
+          "note": "a broken chain, or a claim the record denies",
+          "tone": "drift"
+        },
+        {
+          "label": "UNVERIFIABLE",
+          "note": "a clause this verifier cannot re-derive",
+          "tone": "none"
+        }
+      ]
+    },
+    {
+      "file": "endpoint-ladder.svg",
+      "kicker": "one prompt, one ladder",
+      "title": "How a request reaches a model without forging anything to get there",
+      "footnote": "The ladder only moves one way. A missing credential drops a rung, and nothing is forged.",
+      "alt": "Eight stages of the endpoint ladder: prompt, ladder, served local, Ollama, subscription, public API, gateway, cloud. Rungs are tried in order, with free and private tiers first, so metered tokens are spent only when the local ones are unavailable. A subscription rung uses the official command-line tool's own login. A gateway rung uses only its own dedicated key and never replays the provider's official credential to a third-party URL. A rung whose credential is absent is never added to the ladder at all. Three outcomes: answered, ladder exhausted, and nothing to try.",
+      "stages": [
+        {
+          "title": "Prompt",
+          "note": "One request, and no tier named by hand."
+        },
+        {
+          "title": "Ladder",
+          "note": "Rungs in order, free and private ones first."
+        },
+        {
+          "title": "Served local",
+          "note": "A model served on this machine, offline and unmetered."
+        },
+        {
+          "title": "Ollama",
+          "note": "The largest model already pulled here, still local."
+        },
+        {
+          "title": "Subscription",
+          "note": "The official CLI, using the login you already hold."
+        },
+        {
+          "title": "Public API",
+          "note": "A provider key read from your own environment."
+        },
+        {
+          "title": "Gateway",
+          "note": "A base URL you set, with its own dedicated key."
+        },
+        {
+          "title": "Cloud",
+          "note": "An OpenAI-compatible endpoint, the last rung tried."
+        }
+      ],
+      "returns": [],
+      "outcomes": [
+        {
+          "label": "ANSWERED",
+          "note": "the first live rung replied, and stopped there",
+          "tone": "verified"
+        },
+        {
+          "label": "LADDER EXHAUSTED",
+          "note": "every rung present was tried, and none replied",
+          "tone": "drift"
+        },
+        {
+          "label": "NOTHING TO TRY",
+          "note": "no credential present, so no rung was offered",
+          "tone": "none"
+        }
+      ]
+    }
+  ]
+}
