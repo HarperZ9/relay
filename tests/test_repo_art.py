@@ -38,6 +38,7 @@ GATES = (
     "art.card_draws_shapes_not_digits",
     "art.card_text_fits_its_column",
     "art.card_carries_one_mark",
+    "art.card_alt_reaches_the_readme",
     "art.the_gate_can_fail",
 )
 
