@@ -16,6 +16,7 @@ from .local_agent import LocalAgent, available_backends, health_report
 from .local_loop import run_agent
 from .local_session import SessionLedger
 from .local_tools import ToolExecutor, ToolGate
+from .remote_state import remote_state
 
 PROTOCOL = "2025-06-18"
 __version__ = "0.1.0"
@@ -136,6 +137,10 @@ def _call(params: dict) -> dict:
             if name == "relay.doctor":
                 info["local_tiers"] = [type(b).__name__ for b in available_backends()]
                 info["tools"] = [t["name"] for t in TOOLS]
+                # The phone-facing surface is a separate process, so a client
+                # holding this stdio server had no way to ask whether it is on.
+                # Values are withheld; see remote_state.
+                info["remote"] = remote_state()
             return _text(info)
         return {"content": [{"type": "text", "text": f"unknown tool {name!r}"}], "isError": True}
     except Exception as e:
