@@ -6,32 +6,14 @@ the transport module stays within the size gate.
 """
 from __future__ import annotations
 
-import os
-
 from .remote_mcp import _ENDPOINT, config_from_env, serve
-
-
-def _load_dotenv(path: str) -> dict[str, str]:
-    """A tiny stdlib .env reader (KEY=value lines, # comments), so secrets live in
-    a file instead of the process environment. No dependency; the real environment
-    still wins over the file."""
-    import pathlib
-
-    file = pathlib.Path(path)
-    if not file.exists():
-        return {}
-    values: dict[str, str] = {}
-    for line in file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
+from .remote_state import resolved_env
 
 
 def main() -> int:
-    env = {**_load_dotenv(os.environ.get("RELAY_ENV_FILE", ".env")), **os.environ}
+    # Composed by remote_state, so the readout a client asks for is derived
+    # from the same environment this entrypoint actually serves.
+    env, _ = resolved_env()
     cfg = config_from_env(env)
     if cfg is None:
         print("remote MCP is off: set RELAY_REMOTE_TOKEN (see .env.example)")

@@ -126,3 +126,38 @@ def test_relay_status_and_doctor_are_healthy_network_free():
 def test_health_tools_are_advertised():
     names = {t["name"] for t in handle(_req("tools/list"))["result"]["tools"]}
     assert {"relay.status", "relay.doctor"} <= names
+
+
+def test_doctor_reports_the_remote_surface_it_does_not_run(monkeypatch):
+    """The seam the desktop client reads.
+
+    The phone-facing surface is a separate process, so a client holding this
+    stdio server had no way to ask whether it is on. The doctor carries the
+    readout; what is under test here is that the block arrives, answers the
+    configured question, and carries no secret with it.
+    """
+    monkeypatch.setenv("RELAY_ENV_FILE", "no-such-file.env")
+    monkeypatch.delenv("RELAY_REMOTE_TOKEN", raising=False)
+    off = handle(_req("tools/call", params={"name": "relay.doctor"}))
+    body = json.loads(off["result"]["content"][0]["text"])
+    assert body["remote"]["configured"] is False
+    assert "RELAY_REMOTE_TOKEN" in body["remote"]["reason"]
+
+    monkeypatch.setenv("RELAY_REMOTE_TOKEN", "sentinel-token-value")
+    on = json.loads(
+        handle(_req("tools/call", params={"name": "relay.doctor"}))
+        ["result"]["content"][0]["text"])
+    assert on["remote"]["configured"] is True
+    # The value never travels, only the fact that the key is set.
+    assert "sentinel-token-value" not in json.dumps(on)
+    assert on["remote"]["keys_present"]["RELAY_REMOTE_TOKEN"] is True
+
+
+def test_status_stays_a_liveness_check(monkeypatch):
+    # relay.status is what the lane probe calls on every refresh. Reading the
+    # environment there would make a liveness check depend on configuration.
+    monkeypatch.setenv("RELAY_REMOTE_TOKEN", "t")
+    body = json.loads(
+        handle(_req("tools/call", params={"name": "relay.status"}))
+        ["result"]["content"][0]["text"])
+    assert "remote" not in body
