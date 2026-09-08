@@ -28,6 +28,7 @@ RUNNING = "running"
 DONE = "done"
 ERROR = "error"
 INTERRUPTED = "interrupted"   # a run whose worker was lost to a restart
+_UNSET = object()
 
 
 @dataclass
@@ -39,6 +40,7 @@ class _Run:
     error: str | None = None
     started: int = 0
     finished: int | None = None
+    request_binding: dict | None = None
 
 
 def _now() -> int:
@@ -71,23 +73,27 @@ class RunRegistry:
     def _path(self, run_id: str) -> str:
         return os.path.join(self._run_root, f"{run_id}.json")
 
-    def _persist(self, run: _Run) -> None:
+    def _persist(self, run: _Run, *, state: str | None = None,
+                 finished: int | None | object = _UNSET) -> bool:
         if not self._run_root:
-            return
-        rec = {"run_id": run.run_id, "state": run.state, "result": run.result,
-               "error": run.error, "started": run.started, "finished": run.finished,
-               "ledger_jsonl": run.ledger.to_jsonl()}
+            return True
+        rec_finished = run.finished if finished is _UNSET else finished
+        rec = {"run_id": run.run_id, "state": state or run.state, "result": run.result,
+               "error": run.error, "started": run.started, "finished": rec_finished,
+               "ledger_jsonl": run.ledger.to_jsonl(),
+               "request_binding": run.request_binding}
         tmp = self._path(run.run_id) + ".tmp"
         for _ in range(6):
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(rec, f)
                 os.replace(tmp, self._path(run.run_id))   # atomic swap
-                return
+                return True
             except OSError:
                 # a transient lock (a racing reader on Windows) is retried; persistence
                 # stays best-effort and never breaks the run if the disk is unavailable.
                 time.sleep(0.02)
+        return False
 
     def _load_all(self) -> None:
         loaded: list[_Run] = []
@@ -106,20 +112,26 @@ class RunRegistry:
             state = rec.get("state")
             if state == RUNNING:               # the worker that ran it is gone
                 state = INTERRUPTED
+            request_binding = rec.get("request_binding")
+            if not isinstance(request_binding, dict):
+                request_binding = None
             loaded.append(_Run(rec.get("run_id", name[:-5]), led, state=state,
                                result=rec.get("result"), error=rec.get("error"),
-                               started=rec.get("started", 0), finished=rec.get("finished")))
+                               started=rec.get("started", 0), finished=rec.get("finished"),
+                               request_binding=request_binding))
         loaded.sort(key=lambda r: r.started)   # oldest first, so eviction keeps the newest
         with self._lock:
             for r in loaded[-self._max_runs:]:
                 self._runs[r.run_id] = r
 
-    def start(self, work: Callable[[SessionLedger], dict]) -> str:
+    def start(self, work: Callable[[SessionLedger], dict],
+              *, request_binding: dict | None = None) -> str:
         """Run ``work(ledger)`` in a daemon thread; return its run_id at once.
         ``work`` receives the run's ledger, so its progress is observable live and
         its return value becomes the result."""
         run_id = self._id_source()
-        run = _Run(run_id, SessionLedger(), started=self._clock())
+        run = _Run(run_id, SessionLedger(), started=self._clock(),
+                   request_binding=request_binding)
         with self._lock:
             self._runs[run_id] = run
             while len(self._runs) > self._max_runs:
@@ -136,14 +148,25 @@ class RunRegistry:
     def _execute(self, run: _Run, work: Callable[[SessionLedger], dict]) -> None:
         try:
             result = work(run.ledger)
+            finished = self._clock()
             with self._lock:
-                run.result, run.state = result, DONE
+                run.result = result
+            persisted = self._persist(run, state=DONE, finished=finished)
+            with self._lock:
+                run.finished = finished
+                if persisted:
+                    run.state = DONE
+                else:
+                    run.error, run.state = "final result persistence failed", ERROR
         except Exception as exc:  # a dead backend or a raising tool is witnessed, not lost
+            finished = self._clock()
             with self._lock:
-                run.error, run.state = f"{type(exc).__name__}: {exc}", ERROR
+                run.error = f"{type(exc).__name__}: {exc}"
+            self._persist(run, state=ERROR, finished=finished)
+            with self._lock:
+                run.finished = finished
+                run.state = ERROR
         finally:
-            with self._lock:
-                run.finished = self._clock()
             self._persist(run)   # the finished run survives a restart, fetchable again
 
     def _get(self, run_id: str) -> _Run | None:
@@ -163,6 +186,8 @@ class RunRegistry:
                "steps": sum(1 for e in entries if e.kind == "assistant"),
                "entries": len(entries), "latest": latest,
                "started": run.started, "finished": run.finished}
+        if run.request_binding is not None:
+            out["request_binding"] = run.request_binding
         if run.state == ERROR:
             out["error"] = run.error
         return out
@@ -172,15 +197,18 @@ class RunRegistry:
         run = self._get(run_id)
         if run is None:
             return {"error": f"unknown run_id {run_id!r}"}
+        binding = ({"request_binding": run.request_binding}
+                   if run.request_binding is not None else {})
         if run.state == RUNNING:
             return {"run_id": run_id, "state": RUNNING,
-                    "note": "still running; poll local_agent_status"}
+                    "note": "still running; poll local_agent_status", **binding}
         if run.state == ERROR:
-            return {"run_id": run_id, "state": ERROR, "error": run.error}
+            return {"run_id": run_id, "state": ERROR, "error": run.error, **binding}
         if run.state == INTERRUPTED:
             return {"run_id": run_id, "state": INTERRUPTED,
-                    "note": "interrupted by a restart; the witnessed ledger is partial"}
-        return {"run_id": run_id, "state": DONE, "result": run.result}
+                    "note": "interrupted by a restart; the witnessed ledger is partial",
+                    **binding}
+        return {"run_id": run_id, "state": DONE, "result": run.result, **binding}
 
     def list(self, *, limit: int = 20) -> dict:
         """Recent runs, newest first, so a phone that lost its run_id can find it
@@ -190,6 +218,8 @@ class RunRegistry:
         runs.sort(key=lambda r: r.started, reverse=True)
         rows = [{"run_id": r.run_id, "state": r.state, "started": r.started,
                  "finished": r.finished,
-                 "steps": sum(1 for e in r.ledger.entries if e.kind == "assistant")}
+                 "steps": sum(1 for e in r.ledger.entries if e.kind == "assistant"),
+                 **({"request_binding": r.request_binding}
+                    if r.request_binding is not None else {})}
                 for r in runs[:limit]]
         return {"runs": rows, "count": len(rows)}

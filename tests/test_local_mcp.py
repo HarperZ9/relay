@@ -7,6 +7,7 @@ method/tool are typed; (6) the serve loop round-trips JSON-RPC.
 """
 import io
 import json
+import tomllib
 
 from relay.local_mcp import handle, serve
 
@@ -27,6 +28,19 @@ def test_initialize_and_tools_list():
                      "local_agent_start", "local_agent_status", "local_agent_result",
                      "local_agent_runs", "local_agent_sessions",
                      "relay.status", "relay.doctor"}
+
+
+def test_package_import_and_mcp_versions_match():
+    import relay
+    import relay.local_mcp as m
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    version = project["project"]["version"]
+
+    assert version == relay.__version__ == m.__version__
+    assert handle(_req("initialize"))["result"]["serverInfo"]["version"] == version
 
 
 def test_background_run_start_status_result(monkeypatch):
@@ -161,3 +175,357 @@ def test_status_stays_a_liveness_check(monkeypatch):
         handle(_req("tools/call", params={"name": "relay.status"}))
         ["result"]["content"][0]["text"])
     assert "remote" not in body
+
+
+def test_local_agent_runs_limit_is_strict(monkeypatch):
+    import relay.local_mcp as m
+
+    seen = {}
+
+    class Registry:
+        def list(self, *, limit=20):
+            seen["limit"] = limit
+            return {"runs": [], "count": 0}
+
+    monkeypatch.setattr(m, "RUNS", Registry())
+    ok = _decode_tool(handle(_req("tools/call", params={"name": "local_agent_runs",
+                                                        "arguments": {"limit": 1}})))
+    assert ok == {"runs": [], "count": 0}
+    assert seen["limit"] == 1
+
+    for bad in ("1", True, 1.2, -1):
+        resp = handle(_req("tools/call", params={"name": "local_agent_runs",
+                                                 "arguments": {"limit": bad}}))
+        assert resp["result"]["isError"] is True
+        body = _decode_tool(resp)
+        assert body["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def _decode_tool(resp):
+    return json.loads(resp["result"]["content"][0]["text"])
+
+
+class _McpScriptedBackend:
+    name = "stub"
+
+    def __init__(self, replies, *, capture=None):
+        self._replies = list(replies)
+        self.capture = capture if capture is not None else {}
+
+    def health(self):
+        return True
+
+    def chat(self, messages, *, system, max_tokens, temperature, seed):
+        self.capture["max_tokens"] = max_tokens
+        text = self._replies.pop(0) if self._replies else "done"
+        return {"text": text, "model_ref": "stub:scripted", "seed": seed}
+
+
+def test_run_and_start_schemas_expose_cli_parity_fields():
+    schemas = {t["name"]: t["inputSchema"] for t in handle(_req("tools/list"))["result"]["tools"]}
+    for tool in ("local_agent_run", "local_agent_start"):
+        props = schemas[tool]["properties"]
+        assert {"backend", "model", "max_tokens", "check", "test_cmd", "compact_budget"} <= set(props)
+
+
+def test_blocking_run_passes_cli_parity_options_and_returns_request_binding(monkeypatch, tmp_path):
+    import relay.local_mcp as m
+
+    captured = {}
+
+    def fake_available_backends(*, model=""):
+        captured["model"] = model
+        return [_McpScriptedBackend(["done"], capture=captured)]
+
+    seen = {}
+
+    def fake_run_agent(agent, goal, ex, ledger, *, max_steps=6, check=None, test_cmd=None,
+                       approve=None, compact_budget=0):
+        seen.update({
+            "goal": goal,
+            "root": ex.root,
+            "allow_write": ex.gate.allow_write,
+            "allow_exec": ex.gate.allow_exec,
+            "max_steps": max_steps,
+            "check": check,
+            "test_cmd": test_cmd,
+            "compact_budget": compact_budget,
+            "prefer": agent.prefer,
+            "max_tokens": agent.max_tokens,
+        })
+        ledger.append("assistant", "done", {"backend": "stub", "receipt": {"receipt_id": "rid", "model_ref": "stub:scripted"}})
+        return {"final": "done", "steps": 1, "verified": True, "final_answer": True,
+                "chain_ok": True, "checkpoint": "abc123", "accepted": True,
+                "check_passed": True, "ledger": ledger}
+
+    monkeypatch.setattr(m, "available_backends", fake_available_backends)
+    monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
+        "goal": "fix the bug", "root": str(tmp_path), "backend": "stub",
+        "model": "stub-model", "max_tokens": 123, "max_steps": 4,
+        "allow_write": True, "allow_exec": True, "check": "pytest -q",
+        "test_cmd": "pytest tests/test_bug.py", "compact_budget": 2048,
+    }}))
+    body = _decode_tool(resp)
+    assert seen == {"goal": "fix the bug", "root": str(tmp_path), "allow_write": True,
+                    "allow_exec": True, "max_steps": 4, "check": "pytest -q",
+                    "test_cmd": "pytest tests/test_bug.py", "compact_budget": 2048,
+                    "prefer": "stub", "max_tokens": 123}
+    assert captured["model"] == "stub-model"
+    binding = body["request_binding"]
+    assert binding["schema"] == "relay.mcp-run-request/v1"
+    assert binding["backend"] == "stub" and binding["model"] == "stub-model"
+    assert binding["root"] == str(tmp_path)
+    assert binding["allow_write"] is True and binding["allow_exec"] is True
+    assert binding["max_steps"] == 4 and binding["max_tokens"] == 123
+    assert binding["compact_budget"] == 2048
+    assert binding["check_present"] is True and binding["test_cmd_present"] is True
+    assert len(binding["goal_sha256"]) == 64
+    assert body["observed_route"]["backend"] == "stub"
+    assert body["observed_route"]["model_ref"] == "stub:scripted"
+    assert body["accepted"] is True and body["check_passed"] is True
+
+
+def test_background_start_passes_cli_parity_options_and_persists_request_binding(monkeypatch, tmp_path):
+    import time
+
+    from relay.async_runs import DONE, RunRegistry
+    import relay.local_mcp as m
+
+    captured = {}
+    seen = {}
+
+    monkeypatch.setattr(m, "RUNS", RunRegistry(id_source=lambda: "mcp-run",
+                                               clock=lambda: 11,
+                                               run_root=str(tmp_path / "runs")))
+
+    def fake_available_backends(*, model=""):
+        captured["model"] = model
+        return [_McpScriptedBackend(["done"], capture=captured)]
+
+    def fake_run_agent(agent, goal, ex, ledger, *, max_steps=6, check=None, test_cmd=None,
+                       approve=None, compact_budget=0):
+        seen.update({"goal": goal, "root": ex.root, "max_steps": max_steps,
+                     "check": check, "test_cmd": test_cmd,
+                     "compact_budget": compact_budget, "prefer": agent.prefer,
+                     "max_tokens": agent.max_tokens})
+        ledger.append("assistant", "done", {"backend": "stub", "receipt": {"model_ref": "stub:bg"}})
+        return {"final": "done", "steps": 1, "verified": True, "final_answer": True,
+                "chain_ok": True, "checkpoint": "abc123", "accepted": True,
+                "check_passed": True, "ledger": ledger}
+
+    monkeypatch.setattr(m, "available_backends", fake_available_backends)
+    monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    start = handle(_req("tools/call", params={"name": "local_agent_start", "arguments": {
+        "goal": "background fix", "root": str(tmp_path), "backend": "stub",
+        "model": "stub-model", "max_tokens": 321, "max_steps": 5,
+        "check": "pytest -q", "test_cmd": "pytest tests/test_bug.py",
+        "compact_budget": 1024,
+    }}))
+    body = _decode_tool(start)
+    binding = body["request_binding"]
+    assert body["run_id"] == "mcp-run" and binding["backend"] == "stub"
+
+    result = {"state": "running"}
+    for _ in range(400):
+        result = _decode_tool(handle(_req("tools/call", params={
+            "name": "local_agent_result", "arguments": {"run_id": "mcp-run"}})))
+        if result["state"] == DONE:
+            break
+        time.sleep(0.005)
+
+    assert result["state"] == DONE
+    assert seen == {"goal": "background fix", "root": str(tmp_path),
+                    "max_steps": 5, "check": "pytest -q",
+                    "test_cmd": "pytest tests/test_bug.py",
+                    "compact_budget": 1024, "prefer": "stub", "max_tokens": 321}
+    assert captured["model"] == "stub-model"
+    assert result["request_binding"] == binding
+    assert result["result"]["request_binding"] == binding
+    assert RunRegistry(run_root=str(tmp_path / "runs")).result("mcp-run")["request_binding"] == binding
+
+
+def test_exec_grant_binding_reports_effective_write_authority(monkeypatch, tmp_path):
+    import relay.local_mcp as m
+
+    seen = {}
+
+    def fake_run_agent(agent, goal, ex, ledger, *, max_steps=6):
+        seen["allow_write"] = ex.gate.allow_write
+        seen["allow_exec"] = ex.gate.allow_exec
+        ledger.append("assistant", "done", {"backend": "stub", "receipt": {"model_ref": "stub:exec"}})
+        return {"final": "done", "steps": 1, "verified": True, "final_answer": True,
+                "chain_ok": True, "checkpoint": "abc123", "accepted": True,
+                "check_passed": True, "ledger": ledger}
+
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    body = _decode_tool(handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
+        "goal": "run a shell", "root": str(tmp_path), "backend": "stub",
+        "allow_exec": True,
+    }})))
+
+    assert seen == {"allow_write": True, "allow_exec": True}
+    assert body["request_binding"]["allow_exec"] is True
+    assert body["request_binding"]["allow_write"] is True
+    assert body["request_binding"]["requested_allow_write"] is False
+
+
+def test_background_exec_grant_binding_reports_effective_write_authority(monkeypatch, tmp_path):
+    import time
+
+    from relay.async_runs import DONE, RunRegistry
+    import relay.local_mcp as m
+
+    monkeypatch.setattr(m, "RUNS", RunRegistry(id_source=lambda: "exec-bg",
+                                               run_root=str(tmp_path / "runs")))
+
+    def fake_run_agent(agent, goal, ex, ledger, *, max_steps=6):
+        ledger.append("assistant", f"write={ex.gate.allow_write}")
+        return {"final": "done", "steps": 1, "verified": True, "final_answer": True,
+                "chain_ok": True, "checkpoint": "abc123", "accepted": True,
+                "check_passed": True, "ledger": ledger}
+
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    start = _decode_tool(handle(_req("tools/call", params={"name": "local_agent_start",
+                                                           "arguments": {
+                                                               "goal": "run a shell",
+                                                               "backend": "stub",
+                                                               "allow_exec": True,
+                                                           }})))
+    assert start["request_binding"]["allow_write"] is True
+    assert start["request_binding"]["requested_allow_write"] is False
+
+    result = {"state": "running"}
+    for _ in range(400):
+        result = _decode_tool(handle(_req("tools/call", params={
+            "name": "local_agent_result", "arguments": {"run_id": "exec-bg"}})))
+        if result["state"] == DONE:
+            break
+        time.sleep(0.005)
+    assert result["state"] == DONE
+    assert result["request_binding"]["allow_write"] is True
+    assert RunRegistry(run_root=str(tmp_path / "runs")).result("exec-bg")[
+        "request_binding"]["allow_write"] is True
+
+
+def test_mcp_write_denied_keeps_file_unchanged(monkeypatch, tmp_path):
+    import relay.local_mcp as m
+
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [
+        _McpScriptedBackend(['TOOL write_file {"path": "x.txt", "content": "hi"}',
+                             "write was denied"])
+    ])
+    resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
+        "goal": "write x", "root": str(tmp_path), "backend": "stub", "max_steps": 3,
+        "allow_write": False,
+    }}))
+    body = _decode_tool(resp)
+    assert not (tmp_path / "x.txt").exists()
+    assert body["accepted"] is True
+    assert body["request_binding"]["allow_write"] is False
+
+
+def test_mcp_exec_denied_prevents_test_cmd_from_running(monkeypatch, tmp_path):
+    import relay.local_mcp as m
+
+    marker = tmp_path / "ran.txt"
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
+        "goal": "answer", "root": str(tmp_path), "backend": "stub", "max_steps": 2,
+        "allow_exec": False, "test_cmd": f"python -c \"open(r'{marker}', 'w').write('ran')\"",
+    }}))
+    body = _decode_tool(resp)
+    assert not marker.exists()
+    assert body["accepted"] is False and body["check_passed"] is False
+    assert "exec is disabled" in body.get("note", "")
+
+
+def test_mcp_check_failure_cannot_be_accepted(monkeypatch, tmp_path):
+    import relay.local_loop as loop
+    import relay.local_mcp as m
+
+    class Proc:
+        returncode = 1
+        stdout = ""
+        stderr = "1 failed"
+
+    calls = []
+    def fake_run(cmd, *, shell, cwd, capture_output, text, timeout):
+        calls.append((cmd, cwd))
+        return Proc()
+
+    monkeypatch.setattr(loop.subprocess, "run", fake_run)
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
+        "goal": "answer", "root": str(tmp_path), "backend": "stub", "max_steps": 2,
+        "check": "pytest -q",
+    }}))
+    body = _decode_tool(resp)
+    assert calls == [("pytest -q", str(tmp_path))]
+    assert body["check_passed"] is False and body["accepted"] is False
+
+
+def test_mcp_unsupported_backend_is_typed_failure(monkeypatch):
+    import relay.local_mcp as m
+
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
+        "goal": "answer", "backend": "missing-backend",
+    }}))
+    assert resp["result"]["isError"] is True
+    body = _decode_tool(resp)
+    assert body["error"]["code"] == "UNSUPPORTED_BACKEND"
+    assert body["request_binding"]["backend"] == "missing-backend"
+
+
+def test_mcp_argument_type_errors_are_typed(monkeypatch):
+    import relay.local_mcp as m
+
+    monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    cases = [
+        {"goal": ["not a string"]},
+        {"goal": "answer", "backend": 3},
+        {"goal": "answer", "model": 3},
+        {"goal": "answer", "root": 3},
+        {"goal": "answer", "check": ["pytest"]},
+        {"goal": "answer", "test_cmd": ["pytest"]},
+        {"goal": "answer", "max_steps": "4"},
+        {"goal": "answer", "max_tokens": 3.7},
+        {"goal": "answer", "compact_budget": -1},
+        {"goal": "answer", "allow_write": "false"},
+    ]
+    for args in cases:
+        resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": args}))
+        assert resp["result"]["isError"] is True
+        body = _decode_tool(resp)
+        assert body["error"]["code"] == "INVALID_ARGUMENT", args
+
+
+def test_observed_route_reports_the_last_witnessed_assistant_route():
+    import relay.local_mcp as m
+    from relay.local_session import SessionLedger
+
+    ledger = SessionLedger()
+    ledger.append("assistant", "draft", {
+        "backend": "stub-first",
+        "receipt": {"receipt_id": "first", "model_ref": "model-first"},
+    })
+    ledger.append("tool", "read file")
+    ledger.append("assistant", "final", {
+        "backend": "stub-final",
+        "receipt": {"receipt_id": "final", "model_ref": "model-final"},
+    })
+
+    projected = m._run_projection(
+        {"final": "done", "steps": 2, "verified": True, "final_answer": True,
+         "chain_ok": True, "checkpoint": "abc123", "accepted": True,
+         "check_passed": True, "ledger": ledger})
+    assert projected["observed_route"] == {
+        "backend": "stub-final",
+        "model_ref": "model-final",
+        "receipt_id": "final",
+        "source": "last_witnessed_assistant",
+        "seq": 2,
+    }

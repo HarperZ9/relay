@@ -8,13 +8,18 @@ automatic failover across all of them, and every run is a re-verifiable,
 git-anchored trajectory. Stdlib only.
 
 ```
-pip install git+https://github.com/HarperZ9/relay.git
+python -m pip install "relay-agent @ git+https://github.com/HarperZ9/relay.git@<accepted-commit>"
 
 relay --health --online                    # which model tiers are live?
 relay "explain this function" --file app.py
 relay --agent "fix the off-by-one in paginate()" --root . --allow-write --auto-commit
 relay --mcp                                # serve the agent to any MCP client
 ```
+
+For release installs, use a pinned HarperZ9 GitHub commit or a hash-verified
+GitHub Release wheel. Do not use the bare PyPI name `relay-agent`; that public
+namespace is not the HarperZ9 Relay distribution. See
+[`docs/GITHUB-ONLY-INSTALL.md`](docs/GITHUB-ONLY-INSTALL.md).
 
 ## Reaches every endpoint (with your own credentials)
 
@@ -243,9 +248,18 @@ verifier names them unverifiable and stops there.
 ## Use from an agent (MCP)
 
 `relay --mcp` is a zero-dep stdio MCP server exposing `local_agent_health`,
-`local_agent_chat`, and `local_agent_run`. Point Claude Code (or any MCP client)
-at it to use relay as a fallback tier, e.g. keep working on local models when a
-hosted quota runs out.
+`local_agent_chat`, `local_agent_run`, and the background `local_agent_start` /
+`local_agent_status` / `local_agent_result` loop. Point Claude Code (or any MCP
+client) at it to use relay as a fallback tier, e.g. keep working on local models
+when a hosted quota runs out.
+
+The MCP run tools accept the same bounded routing and acceptance dials as the
+local CLI agent path: `backend`, `model`, `max_tokens`, `check`, `test_cmd`, and
+`compact_budget`, in addition to `goal`, `root`, `allow_write`, `allow_exec`,
+`max_steps`, and `online`. Results carry a request binding with the admitted
+effective backend/model/gate choices, including that exec implies write, and
+hashes of the goal/check commands. Results also include the last witnessed
+assistant backend/model receipt when a run reaches the agent loop.
 
 ## Library
 

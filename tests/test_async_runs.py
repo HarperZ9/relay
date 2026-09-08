@@ -152,3 +152,56 @@ def test_persistence_is_off_without_a_run_root():
     rid = reg.start(work)
     assert _wait(reg, rid, DONE)
     assert "error" in RunRegistry().result(rid)   # a fresh registry shares nothing
+
+
+def test_request_binding_survives_status_result_and_restart(tmp_path):
+    from relay.async_runs import DONE
+    root = str(tmp_path / "runs")
+    binding = {"schema": "relay.mcp-run-request/v1", "backend": "stub",
+               "goal_sha256": "a" * 64}
+    reg = RunRegistry(id_source=lambda: "run-bound", clock=lambda: 9, run_root=root)
+
+    def work(ledger):
+        ledger.append("assistant", "done")
+        return {"final": "kept", "request_binding": binding}
+
+    run_id = reg.start(work, request_binding=binding)
+    assert _wait(reg, run_id, DONE)
+    assert reg.status(run_id)["request_binding"] == binding
+    assert reg.result(run_id)["request_binding"] == binding
+    assert reg.result(run_id)["result"]["request_binding"] == binding
+    reborn = RunRegistry(run_root=root)
+    assert reborn.status(run_id)["request_binding"] == binding
+    assert reborn.result(run_id)["request_binding"] == binding
+    assert reborn.list()["runs"][0]["request_binding"] == binding
+
+
+def test_done_result_is_not_exposed_before_final_persist_finishes(tmp_path):
+    from relay.async_runs import DONE, INTERRUPTED, RUNNING
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-durable", run_root=root)
+    original_persist = reg._persist
+    final_persist_entered = threading.Event()
+    release_final_persist = threading.Event()
+
+    def slow_final_persist(run, **kwargs):
+        state = kwargs.get("state", run.state)
+        if state == DONE:
+            final_persist_entered.set()
+            release_final_persist.wait(3.0)
+        return original_persist(run, **kwargs)
+
+    reg._persist = slow_final_persist
+
+    def work(ledger):
+        ledger.append("assistant", "done")
+        return {"final": "durable"}
+
+    run_id = reg.start(work)
+    assert final_persist_entered.wait(3.0)
+    assert reg.result(run_id)["state"] == RUNNING
+    assert RunRegistry(run_root=root).result(run_id)["state"] == INTERRUPTED
+
+    release_final_persist.set()
+    assert _wait(reg, run_id, DONE)
+    assert RunRegistry(run_root=root).result(run_id)["state"] == DONE
