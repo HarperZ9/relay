@@ -1,9 +1,20 @@
 # Changelog
 
-## 0.2.0 candidate, 2026-09-08
+## 0.2.1, 2026-09-10
 
-Status: candidate until an accepted commit is tagged and GitHub Release artifacts
-are uploaded by the release owner.
+Status: GitHub-only patch release. Do not publish or recommend the bare PyPI name
+`relay-agent`; that public namespace is not the HarperZ9 Relay distribution.
+
+### Fixed
+
+- MCP stdio now returns JSON-RPC parse/invalid-request/invalid-params errors
+  for malformed input, invalid request ids, and non-object `tools/call` params
+  without echoing rejected input or stopping the server.
+
+## 0.2.0, 2026-09-08
+
+Status: GitHub-only release with hash-verified GitHub Release artifacts
+uploaded by the release owner.
 
 ### Added
 
