@@ -7,7 +7,11 @@ method/tool are typed; (6) the serve loop round-trips JSON-RPC.
 """
 import io
 import json
+import sys
+import subprocess
+import os
 import tomllib
+from pathlib import Path
 
 from relay.local_mcp import handle, serve
 
@@ -19,6 +23,31 @@ def _req(method, rid=1, params=None):
     if params is not None:
         r["params"] = params
     return r
+
+
+def _stdio_vectors():
+    return json.loads(
+        (Path(__file__).parent / "fixtures" / "mcp_stdio_error_vectors.json")
+        .read_text(encoding="utf-8"))
+
+
+
+
+def _run_stdio_module(stdin_text: str):
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(root / "src")}
+    if os.environ.get("PYTHONPATH"):
+        env["PYTHONPATH"] += os.pathsep + os.environ["PYTHONPATH"]
+    return subprocess.run(
+        [sys.executable, "-u", "-m", "relay.local_mcp"],
+        input=stdin_text,
+        text=True,
+        capture_output=True,
+        cwd=root,
+        env=env,
+        timeout=12,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
 
 
 def test_initialize_and_tools_list():
@@ -119,6 +148,55 @@ def test_serve_loop_roundtrips():
     out = io.StringIO()
     serve(stdin=stdin, stdout=out)
     assert json.loads(out.getvalue())["result"]["serverInfo"]["name"] == "local-agent"
+
+
+def test_stdio_reports_malformed_json_and_keeps_server_alive_without_echoing_input():
+    case = next(c for c in _stdio_vectors()["cases"] if c["name"] == "malformed_json_returns_parse_error_without_echo")
+    stdin = io.StringIO(case["line"] + "\n"
+                        + json.dumps(_req("initialize", rid=7)) + "\n")
+    out = io.StringIO()
+
+    serve(stdin=stdin, stdout=out)
+
+    text = out.getvalue()
+    lines = [json.loads(line) for line in text.splitlines()]
+    assert lines[0]["id"] == case["expect_id"]
+    assert lines[0]["error"]["code"] == case["expect_code"]
+    assert case["secret"] not in text
+    assert lines[1]["id"] == 7
+    assert lines[1]["result"]["serverInfo"]["name"] == "local-agent"
+
+
+def test_valid_json_nonrequest_is_invalid_request_with_null_id():
+    case = next(c for c in _stdio_vectors()["cases"] if c["name"] == "valid_json_array_is_invalid_request")
+
+    resp = handle(case["message"])
+
+    assert resp["id"] == case["expect_id"]
+    assert resp["error"]["code"] == case["expect_code"]
+
+
+def test_invalid_object_requests_preserve_request_id_in_error():
+    cases = [c for c in _stdio_vectors()["cases"]
+             if c["name"] in {"missing_method_preserves_request_id",
+                              "non_string_method_preserves_request_id"}]
+
+    for case in cases:
+        resp = handle(case["message"])
+        assert resp["id"] == case["expect_id"]
+        assert resp["error"]["code"] == case["expect_code"]
+
+
+def test_mixed_stdio_notifications_do_not_emit_spurious_replies():
+    stdin = io.StringIO(json.dumps(_req("notifications/initialized", rid=None)) + "\n"
+                        + json.dumps(_req("tools/list", rid="after-notification")) + "\n")
+    out = io.StringIO()
+
+    serve(stdin=stdin, stdout=out)
+
+    lines = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert len(lines) == 1
+    assert lines[0]["id"] == "after-notification"
 
 
 def test_relay_status_and_doctor_are_healthy_network_free():
@@ -529,3 +607,74 @@ def test_observed_route_reports_the_last_witnessed_assistant_route():
         "source": "last_witnessed_assistant",
         "seq": 2,
     }
+
+
+def test_request_id_validation_rejects_invalid_ids_without_echoing_input():
+    case_names = {
+        "object_request_id_uses_null_without_echo",
+        "array_request_id_uses_null",
+        "boolean_request_id_uses_null",
+        "null_request_id_uses_null",
+        "float_request_id_uses_null",
+    }
+    for case in _stdio_vectors()["cases"]:
+        if case["name"] not in case_names:
+            continue
+        resp = handle(case["message"])
+        text = json.dumps(resp)
+        assert resp["id"] is None
+        assert resp["error"]["code"] == case["expect_code"]
+        if "secret" in case:
+            assert case["secret"] not in text
+
+
+def test_invalid_envelopes_and_params_return_protocol_errors():
+    case_names = {
+        "wrong_jsonrpc_version_is_invalid_request",
+        "tools_call_array_params_is_invalid_params",
+        "tools_call_null_params_is_invalid_params",
+        "tools_call_scalar_params_is_invalid_params",
+    }
+    for case in _stdio_vectors()["cases"]:
+        if case["name"] not in case_names:
+            continue
+        resp = handle(case["message"])
+        assert resp["id"] == case["expect_id"]
+        assert resp["error"]["code"] == case["expect_code"]
+
+
+def test_known_method_notifications_do_not_dispatch_or_reply(monkeypatch):
+    import relay.local_mcp as server_module
+    calls = []
+
+    def fake_call(params):
+        calls.append(params)
+        return {"content": []}
+
+    monkeypatch.setattr(server_module, "_call", fake_call)
+    assert handle({"jsonrpc": "2.0", "method": "tools/list"}) is None
+    assert handle({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "anything"}}) is None
+    assert calls == []
+
+
+def test_real_stdio_probe_vectors_keep_server_alive_and_clean_stdout():
+    init = {"jsonrpc": "2.0", "id": 7, "method": "initialize"}
+    for case in _stdio_vectors()["cases"]:
+        first_line = case.get("line") or json.dumps(case["message"])
+        proc = _run_stdio_module(first_line + "\n" + json.dumps(init) + "\n")
+        assert proc.returncode == 0, proc.stderr
+        assert "AttributeError" not in proc.stderr
+        lines = [json.loads(line) for line in proc.stdout.splitlines()]
+        if case.get("expect_response", True) is False:
+            assert len(lines) == 1, case["name"]
+            assert lines[0]["id"] == 7
+            assert "result" in lines[0]
+        else:
+            assert len(lines) == 2, case["name"]
+            assert lines[0]["id"] == case["expect_id"]
+            assert lines[0]["error"]["code"] == case["expect_code"]
+            assert lines[1]["id"] == 7
+            assert "result" in lines[1]
+        if "secret" in case:
+            assert case["secret"] not in proc.stdout
+            assert case["secret"] not in proc.stderr
