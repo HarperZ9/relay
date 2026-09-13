@@ -19,7 +19,7 @@ from .local_loop import run_agent
 from .local_session import SessionLedger
 from .local_tools import ToolExecutor, ToolGate
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 __all__ = [
     "LocalAgent", "available_backends", "health_report", "BackendError",

@@ -27,17 +27,17 @@ After the GitHub Release exists, download the wheel and SHA-256 receipt from the
 release page. Release asset example:
 
 ```text
-tag: v0.2.1
-wheel: relay_agent-0.2.1-py3-none-any.whl
-sdist: relay_agent-0.2.1.tar.gz
+tag: v0.2.2
+wheel: relay_agent-0.2.2-py3-none-any.whl
+sdist: relay_agent-0.2.2.tar.gz
 sha256: <release-sha256-from-SHA256SUMS.txt>
-url: https://github.com/HarperZ9/relay/releases/download/v0.2.1/<asset-name>
+url: https://github.com/HarperZ9/relay/releases/download/v0.2.2/<asset-name>
 ```
 
 Verify the hash before installing. Example:
 
 ```bash
-python -m pip install --no-index ./relay_agent-0.2.1-py3-none-any.whl
+python -m pip install --no-index ./relay_agent-0.2.2-py3-none-any.whl
 ```
 
 This path does not query PyPI. If a future release moves to a new verified

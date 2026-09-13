@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.2, 2026-09-13
+
+Status: GitHub-only patch release candidate. Do not publish or recommend the
+bare PyPI name `relay-agent`; that public namespace is not the HarperZ9 Relay
+distribution.
+
+### Fixed
+
+- Background MCP/agent runs with `RELAY_RUN_ROOT` now durably checkpoint
+  witnessed partial ledgers while they are still running, so a server restart can
+  reload observed progress as an `interrupted` partial run instead of losing it.
+- Final result persistence and running checkpoint writes are serialized so a
+  final `done` record is not replaced by an older running checkpoint.
+
+### Limits
+
+- A partial checkpoint is observed progress only. It is not a completed result,
+  rollback guarantee, or acceptance verdict; `local_agent_result` returns `done`
+  only after the final result record persists.
+
 ## 0.2.1, 2026-09-10
 
 Status: GitHub-only patch release. Do not publish or recommend the bare PyPI name
