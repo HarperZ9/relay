@@ -8,7 +8,7 @@ bounded.
 import threading
 import time
 
-from relay.async_runs import DONE, ERROR, RUNNING, RunRegistry
+from relay.async_runs import DONE, ERROR, INTERRUPTED, RUNNING, RunRegistry
 
 
 def _wait(reg, run_id, want, timeout=3.0):
@@ -176,8 +176,204 @@ def test_request_binding_survives_status_result_and_restart(tmp_path):
     assert reborn.list()["runs"][0]["request_binding"] == binding
 
 
+def test_checkpoint_during_blocked_worker_survives_restart_with_partial_ledger(tmp_path):
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-partial", run_root=root)
+    checkpointed, release = threading.Event(), threading.Event()
+
+    def work(ledger):
+        ledger.append("assistant", "meaningful progress before the worker blocks")
+        written = ledger.persist_checkpoint()
+        assert written["persisted"] is True
+        checkpointed.set()
+        release.wait(3.0)
+        return {"final": "done later"}
+
+    run_id = reg.start(work, request_binding={"schema": "test-binding/v1"})
+    assert checkpointed.wait(3.0)
+    reborn = RunRegistry(run_root=root)
+    status = reborn.status(run_id)
+    assert status["state"] == INTERRUPTED
+    assert status["entries"] == 1
+    assert status["steps"] == 1
+    assert status["latest"][-1]["summary"] == "meaningful progress before the worker blocks"
+    assert reborn.result(run_id)["state"] == INTERRUPTED
+
+    release.set()
+    assert _wait(reg, run_id, DONE)
+    assert RunRegistry(run_root=root).result(run_id)["state"] == DONE
+
+
+def test_repeated_checkpoint_updates_the_partial_snapshot(tmp_path):
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-repeat", run_root=root)
+    checkpointed, release = threading.Event(), threading.Event()
+
+    def work(ledger):
+        ledger.append("assistant", "first durable progress")
+        first = ledger.persist_checkpoint()
+        ledger.append("tool_result", "second durable progress", {"tool": "read_file", "ok": True})
+        second = ledger.persist_checkpoint()
+        assert first["persisted"] is True and first["entries"] == 1
+        assert second["persisted"] is True and second["entries"] == 2
+        checkpointed.set()
+        release.wait(3.0)
+        return {"final": "done later"}
+
+    run_id = reg.start(work)
+    assert checkpointed.wait(3.0)
+    status = RunRegistry(run_root=root).status(run_id)
+    assert status["state"] == INTERRUPTED
+    assert status["entries"] == 2
+    assert status["latest"][-1]["kind"] == "tool_result"
+    assert status["latest"][-1]["summary"] == "second durable progress"
+    release.set()
+
+
+def test_checkpoint_unknown_run_id_is_typed_not_a_crash(tmp_path):
+    reg = RunRegistry(run_root=str(tmp_path / "runs"))
+    result = reg.checkpoint("missing-run")
+    assert result["persisted"] is False
+    assert "unknown run_id" in result["error"]
+
+
+def test_checkpoint_refuses_finished_run_without_rewriting_it_as_running(tmp_path):
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-done", run_root=root)
+
+    def work(ledger):
+        ledger.append("assistant", "finished work")
+        return {"final": "done"}
+
+    run_id = reg.start(work)
+    assert _wait(reg, run_id, DONE)
+    result = reg.checkpoint(run_id)
+    assert result["persisted"] is False
+    assert "state 'done'" in result["error"]
+    reborn = RunRegistry(run_root=root)
+    assert reborn.result(run_id)["state"] == DONE
+    assert reborn.status(run_id)["entries"] == 1
+
+
+def test_failed_checkpoint_write_does_not_report_persisted_success(tmp_path):
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-fail-write", run_root=root)
+    appended, release = threading.Event(), threading.Event()
+
+    def work(ledger):
+        ledger.append("assistant", "not yet durable")
+        appended.set()
+        release.wait(3.0)
+        return {"final": "done later"}
+
+    run_id = reg.start(work)
+    assert appended.wait(3.0)
+    reg._persist = lambda *args, **kwargs: False
+
+    result = reg.checkpoint(run_id)
+    assert result["persisted"] is False
+    assert result["entries"] == 1
+    assert "persistence failed" in result["error"]
+    assert RunRegistry(run_root=root).status(run_id)["entries"] == 0
+    release.set()
+
+
+def test_concurrent_finish_after_checkpoint_leaves_disk_done_not_running(tmp_path):
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-race", run_root=root)
+    progress_appended = threading.Event()
+    release_finish = threading.Event()
+    checkpoint_write_entered = threading.Event()
+    release_checkpoint_write = threading.Event()
+    original_persist = reg._persist
+
+    def slow_running_checkpoint_persist(run, **kwargs):
+        if kwargs.get("state", run.state) == RUNNING and len(run.ledger.entries) == 1:
+            checkpoint_write_entered.set()
+            release_checkpoint_write.wait(3.0)
+        return original_persist(run, **kwargs)
+
+    reg._persist = slow_running_checkpoint_persist
+
+    def work(ledger):
+        ledger.append("assistant", "race progress")
+        progress_appended.set()
+        release_finish.wait(3.0)
+        return {"final": "done after checkpoint"}
+
+    run_id = reg.start(work)
+    assert progress_appended.wait(3.0)
+    checkpoint_result = {}
+    checkpoint_thread = threading.Thread(
+        target=lambda: checkpoint_result.update(reg.checkpoint(run_id)))
+    checkpoint_thread.start()
+    assert checkpoint_write_entered.wait(3.0)
+
+    release_finish.set()
+    time.sleep(0.02)
+    release_checkpoint_write.set()
+    checkpoint_thread.join(3.0)
+
+    assert checkpoint_result["persisted"] is True
+    assert _wait(reg, run_id, DONE)
+    reborn = RunRegistry(run_root=root)
+    assert reborn.result(run_id)["state"] == DONE
+    assert reborn.status(run_id)["entries"] == 1
+
+
+def test_checkpoint_receipt_is_bound_to_serialized_snapshot_when_worker_appends_after_write(tmp_path):
+    root = str(tmp_path / "runs")
+    reg = RunRegistry(id_source=lambda: "run-snapshot", run_root=root)
+    progress_appended = threading.Event()
+    release_finish = threading.Event()
+    checkpoint_file_written = threading.Event()
+    appended_after_write = threading.Event()
+    original_persist = reg._persist
+    delayed_once = {"done": False}
+
+    def delay_after_checkpoint_write(run, **kwargs):
+        persisted = original_persist(run, **kwargs)
+        if (not delayed_once["done"] and kwargs.get("state", run.state) == RUNNING
+                and len(run.ledger.entries) == 1):
+            delayed_once["done"] = True
+            checkpoint_file_written.set()
+            appended_after_write.wait(3.0)
+        return persisted
+
+    reg._persist = delay_after_checkpoint_write
+
+    def work(ledger):
+        ledger.append("assistant", "serialized in checkpoint")
+        progress_appended.set()
+        release_finish.wait(3.0)
+        return {"final": "done after checkpoint"}
+
+    run_id = reg.start(work)
+    assert progress_appended.wait(3.0)
+    checkpoint_result = {}
+    checkpoint_thread = threading.Thread(
+        target=lambda: checkpoint_result.update(reg.checkpoint(run_id)))
+    checkpoint_thread.start()
+    assert checkpoint_file_written.wait(3.0)
+
+    reg._get(run_id).ledger.append("assistant", "live after checkpoint serialization")
+    appended_after_write.set()
+    checkpoint_thread.join(3.0)
+
+    saved = json.loads((tmp_path / "runs" / "run-snapshot.json").read_text(encoding="utf-8"))
+    saved_entries = [json.loads(line) for line in saved["ledger_jsonl"].splitlines() if line.strip()]
+    assert len(saved_entries) == 1
+    assert checkpoint_result["persisted"] is True
+    assert checkpoint_result["entries"] == len(saved_entries)
+    assert checkpoint_result["steps"] == 1
+    assert checkpoint_result["chain_head"] == saved_entries[-1]["entry_hash"]
+    assert reg.status(run_id)["entries"] == 2
+
+    release_finish.set()
+    assert _wait(reg, run_id, DONE)
+
+
 def test_done_result_is_not_exposed_before_final_persist_finishes(tmp_path):
-    from relay.async_runs import DONE, INTERRUPTED, RUNNING
     root = str(tmp_path / "runs")
     reg = RunRegistry(id_source=lambda: "run-durable", run_root=root)
     original_persist = reg._persist

@@ -193,6 +193,28 @@ def test_loop_executes_tools_and_witnesses_the_full_trajectory(tmp_path):
     assert "hello world" in tr.content
 
 
+def test_loop_requests_durable_checkpoints_after_meaningful_progress(tmp_path):
+    class DurableProgressLedger(SessionLedger):
+        def __init__(self):
+            super().__init__()
+            self.persisted_kinds = []
+
+        def persist_checkpoint(self):
+            self.persisted_kinds.append([e.kind for e in self.entries])
+            return {"persisted": True, "entries": len(self.entries)}
+
+    (tmp_path / "a.txt").write_text("hello world", encoding="utf-8")
+    agent = ScriptedAgent(['TOOL read_file {"path": "a.txt"}',
+                           "the file says hello world"])
+    led = DurableProgressLedger()
+
+    run_agent(agent, "what does a.txt say?",
+              ToolExecutor(root=str(tmp_path)), led, max_steps=4)
+
+    assert ["user", "assistant"] in led.persisted_kinds
+    assert ["user", "assistant", "tool_call", "tool_result", "user"] in led.persisted_kinds
+
+
 def test_loop_respects_the_gate_and_keeps_going(tmp_path):
     agent = ScriptedAgent(['TOOL write_file {"path": "x.txt", "content": "hi"}',
                            "I was not allowed to write"])

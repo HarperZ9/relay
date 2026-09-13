@@ -261,6 +261,15 @@ effective backend/model/gate choices, including that exec implies write, and
 hashes of the goal/check commands. Results also include the last witnessed
 assistant backend/model receipt when a run reaches the agent loop.
 
+For background runs, set `RELAY_RUN_ROOT` to make progress durable across a
+server restart. `local_agent_start` snapshots the run record when it starts and
+the agent loop asks for a durable checkpoint after witnessed progress, so a
+fresh server can reload the partial ledger and report `interrupted` instead of
+silently losing the entries. A partial checkpoint is only bytes-on-disk evidence
+for observed progress; it is not a completed result, a rollback guarantee, or an
+acceptance verdict. `local_agent_result` reports `done` only after the final
+result record is persisted.
+
 ## Library
 
 ```python

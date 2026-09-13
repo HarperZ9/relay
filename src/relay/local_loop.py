@@ -29,6 +29,17 @@ _CHECK_TIMEOUT = 600   # an acceptance check (a test/build suite) may be slow
 READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "repo_map"})
 
 
+def _persist_progress_if_available(ledger) -> None:
+    """Ask async run ledgers to durably snapshot partial progress.
+
+    Plain SessionLedger.checkpoint() returns a chain digest, so durable run
+    persistence is intentionally a separate opt-in method.
+    """
+    persist = getattr(ledger, "persist_checkpoint", None)
+    if callable(persist):
+        persist()
+
+
 def _execute_calls(executor, calls: list) -> list:
     """Execute a turn's tool calls, returning results in the ORIGINAL call order.
     All-reads batches run in a thread pool (no side effects, no races); a batch with
@@ -117,6 +128,7 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
             # every backend died mid-run: witness the failure (with the partial
             # work already on the chain) instead of letting it vanish as a traceback.
             ledger.append("error", str(e), {"step": step})
+            _persist_progress_if_available(ledger)
             return _done(f"[backend failure at step {step}] {e}", step, ledger,
                          final_answer=False)
         text = resp["content"][0]["text"] if resp.get("content") else ""
@@ -125,6 +137,7 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
         if resp.get("failover"):
             meta["failover"] = resp["failover"]         # a failed earlier tier is bound in
         ledger.append("assistant", text, meta)
+        _persist_progress_if_available(ledger)
 
         calls = parse_tool_calls(text)
         if not calls:
@@ -132,6 +145,7 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
                 res = executor.execute("run", {"cmd": test_cmd})
                 ledger.append("tool_call", f"run {json.dumps({'cmd': test_cmd}, sort_keys=True)}")
                 ledger.append("tool_result", res.output, {"tool": "run", "ok": res.ok, "gate": "test"})
+                _persist_progress_if_available(ledger)
                 if res.output.startswith("[gate]"):
                     return _done(text, step, ledger, final_answer=True, check_passed=False,
                                  note="test gate set but exec is disabled (pass --allow-exec)")
@@ -157,6 +171,7 @@ def run_agent(agent, goal: str, executor: ToolExecutor,
                    "\n\nContinue if you need more tools, otherwise give the final "
                    "answer with no TOOL line.")
         ledger.append("user", message)   # the continuation prompt the model actually sees next
+        _persist_progress_if_available(ledger)
 
     return _done("[max_steps reached without a final answer]", max_steps, ledger,
                  final_answer=False,
