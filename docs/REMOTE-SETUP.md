@@ -153,3 +153,7 @@ already lists both.
 - **Background runs for a flaky link:** for a long task, prefer `local_agent_start`
   (returns a run_id at once) then poll `local_agent_status` / `local_agent_result`,
   rather than a single blocking `local_agent_run` that a mobile network may drop.
+  When `RELAY_RUN_ROOT` is set, Relay checkpoints witnessed progress during the
+  background run. If the server restarts before completion, the run reloads as
+  `interrupted` with the partial ledger entries preserved; this does not mean the
+  action completed or passed acceptance.
