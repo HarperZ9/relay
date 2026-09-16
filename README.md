@@ -138,6 +138,23 @@ variance in whether the model actually calls `edit_file` at all, on identical
 input, with and without the ambient map. That variance predates this change and
 is not attributed to it here.
 
+## Architect mode: plan with one model, implement with another
+
+```bash
+relay --agent "add rate limiting to fetch()" --root . --allow-write \
+      --architect claude-plan --online --check "pytest -q"
+```
+
+A planning turn runs first on the backend you name. It can be any tier Relay
+already reaches: local, subscription, API, gateway, or cloud. Relay folds that
+plan into the implementer's goal as an attributed proposal. The implementing
+agent still gets the current project context, reads the real code, and may
+adapt or ignore the plan if the code points to a better path. Bare
+`--architect` uses the first healthy backend. Architect mode is currently
+limited to plain single-run `--agent`; Relay refuses `--architect` with
+non-agent modes, watch/MCP/probe/view/verify/bisect/health commands, and
+`--best-of` until those paths have explicit planner semantics.
+
 ## The wedge: a provable run
 
 <p align="center"><img src="docs/art/accountability-lane.svg" alt="Eight stages from goal to certificate, ending in allow, refuted, or unverifiable." width="100%"></p>
