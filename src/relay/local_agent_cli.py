@@ -20,6 +20,8 @@ from .local_agent import (
     available_backends,
     health_report,
 )
+from .architect import plan as architect_plan
+from .architect import with_plan
 from .conventions import with_conventions
 from .local_git import commit_run
 from .local_loop import run_agent, witnessed_edit_paths
@@ -183,10 +185,20 @@ def _run_agentic(args) -> int:
     if not _has_send(agent):
         print("[error] coding agent is missing send()", file=sys.stderr)
         return 1
+    goal = _context_preamble(args.file) + args.prompt
+    if args.architect_backend:
+        planner = LocalAgent(backends=_all_backends(args), prefer=args.architect_backend,
+                             max_tokens=args.max_tokens, temperature=args.temperature,
+                             seed=args.seed)
+        if _live_backend(planner) is None:
+            print(f"[error] --architect backend {args.architect_backend!r} is not healthy",
+                  file=sys.stderr)
+            return 1
+        goal = with_plan(goal, architect_plan(planner, goal))
     executor = ToolExecutor(root=args.root,
                             gate=ToolGate(allow_write=args.allow_write, allow_exec=args.allow_exec))
     ledger = SessionLedger()
-    result = run_agent(agent, _context_preamble(args.file) + args.prompt, executor, ledger,
+    result = run_agent(agent, goal, executor, ledger,
                        max_steps=args.max_steps, check=args.check or None,
                        test_cmd=args.test_cmd or None,
                        approve=_stdin_approver() if getattr(args, "interactive", False) else None,
@@ -297,6 +309,34 @@ def _run_watch(args) -> int:
         return 0
 
 
+def _architect_mode_error(args) -> str:
+    if not args.architect_backend:
+        return ""
+    unsupported = []
+    if not args.agent:
+        unsupported.append("missing --agent")
+    if args.watch:
+        unsupported.append("--watch")
+    if args.probe_injection:
+        unsupported.append("--probe-injection")
+    if args.mcp:
+        unsupported.append("--mcp")
+    if args.view:
+        unsupported.append("--view")
+    if args.verify_cert:
+        unsupported.append("--verify-cert")
+    if args.bisect:
+        unsupported.append("--bisect")
+    if args.health:
+        unsupported.append("--health")
+    if args.best_of and args.best_of > 1:
+        unsupported.append("--best-of")
+    if not unsupported:
+        return ""
+    return ("--architect is supported only with plain single-run --agent; "
+            "unsupported with " + ", ".join(unsupported))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="relay", description=__doc__)
     ap.add_argument("prompt", nargs="?", help="one-shot prompt; omit for a REPL")
@@ -350,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
                     "the model and it keeps working until the command passes or --max-steps "
                     "runs out (needs --allow-exec). Shares --check's accept/reject reporting; "
                     "pass at most one of the two.")
+    ap.add_argument("--architect", nargs="?", const="auto", default=None, dest="architect_backend",
+                    help="with --agent, run a planning turn on the named backend first and "
+                    "fold that attributed proposal into the implementer's goal; bare "
+                    "--architect uses the first healthy backend")
     ap.add_argument("--save", default="", help="save the session ledger to this JSONL path")
     ap.add_argument("--auto-commit", action="store_true", dest="auto_commit",
                     help="git-commit the changes after an --agent run (existing repo only)")
@@ -388,6 +432,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip auto-including a project AGENTS.md/CONVENTIONS.md in the system "
                          "prompt (--agent/--watch only)")
     args = ap.parse_args(argv)
+
+    architect_error = _architect_mode_error(args)
+    if architect_error:
+        print(f"[error] {architect_error}", file=sys.stderr)
+        return 2
 
     if args.probe_injection:
         from .injection_probe import probe
