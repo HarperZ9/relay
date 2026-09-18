@@ -22,6 +22,8 @@ jobs:
         run: python -m pip install -e ".[test]"
       - name: test (hermetic — no network, no GPU, no model)
         run: python -m pytest -q
+      - name: check release metadata
+        run: python tools/check_release_metadata.py
 
   package:
     runs-on: ubuntu-latest

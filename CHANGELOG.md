@@ -1,9 +1,33 @@
 # Changelog
 
+## 0.2.3, 2026-09-17
+
+Status: GitHub-only patch release. Source version metadata is not release
+availability proof; release availability is established only by the accepted Git
+tag, uploaded GitHub Release assets, and matching hash readback. Do not publish
+or recommend the bare PyPI name `relay-agent`; that public namespace is not the
+HarperZ9 Relay distribution.
+
+### Added
+
+- Architect mode can run an attributed planning pass before a plain single-run
+  agent execution, then pass that proposal to the implementer as context.
+- `--architect` refuses watch, MCP, probe, view, verify, bisect, health,
+  best-of, and other modes until those paths have explicit planner semantics.
+
+### Distribution boundary
+
+- Source version metadata, changelog text, and built local artifacts are not
+  release availability proof. The release is established by the accepted Git tag,
+  uploaded GitHub Release assets, and matching hash readback.
+- Install from a pinned HarperZ9 GitHub commit or from a hash-verified GitHub
+  Release wheel. Missing checksum entries or hash mismatches stop before
+  `pip install`.
+
 ## 0.2.2, 2026-09-13
 
-Status: GitHub-only patch release candidate. Do not publish or recommend the
-bare PyPI name `relay-agent`; that public namespace is not the HarperZ9 Relay
+Status: GitHub-only patch release. Do not publish or recommend the bare PyPI
+name `relay-agent`; that public namespace is not the HarperZ9 Relay
 distribution.
 
 ### Fixed

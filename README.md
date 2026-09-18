@@ -17,7 +17,8 @@ relay --mcp                                # serve the agent to any MCP client
 ```
 
 For release installs, use a pinned HarperZ9 GitHub commit or a hash-verified
-GitHub Release wheel. Do not use the bare PyPI name `relay-agent`; that public
+GitHub Release wheel. Missing checksum entries or hash mismatches stop before
+`pip install`. Do not use the bare PyPI name `relay-agent`; that public
 namespace is not the HarperZ9 Relay distribution. See
 [`docs/GITHUB-ONLY-INSTALL.md`](docs/GITHUB-ONLY-INSTALL.md).
 
