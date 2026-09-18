@@ -8,7 +8,8 @@ automatic failover across all of them, and every run is a re-verifiable,
 git-anchored trajectory. Stdlib only.
 
 ```
-python -m pip install "relay-agent @ git+https://github.com/HarperZ9/relay.git@<accepted-commit>"
+# v0.2.3 source pin
+python -m pip install "relay-agent @ git+https://github.com/HarperZ9/relay.git@252e781de7fce6367dca0f293852cc9f22356878"
 
 relay --health --online                    # which model tiers are live?
 relay "explain this function" --file app.py
