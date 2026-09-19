@@ -166,6 +166,13 @@ def handle(req: dict):
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
 
+# Flywheel's bundled-lane MCP contract names the dispatcher `handle_request`
+# (see gather/mcp.py, chorus/mcp.py). relay's is `handle`. Expose both names so
+# the contract is met without rewriting the transport; `handle` stays for
+# back-compat and existing callers.
+handle_request = handle
+
+
 def serve(stdin=None, stdout=None) -> int:
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     for line in stdin:
