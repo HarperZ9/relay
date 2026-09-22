@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "relay-agent"
-version = "0.2.3"
+name = "flywheel-relay"
+version = "0.2.5"
 description = "A zero-dependency, accountable coding agent that runs on any model endpoint: local (served 14B/32B or Ollama) or online (codex/claude/gemini/deepseek via your own keys, subscription CLI, or gateway), with automatic failover, a gated tool loop, and a hash-chained re-verifiable session ledger."
 readme = "README.md"
 requires-python = ">=3.11"

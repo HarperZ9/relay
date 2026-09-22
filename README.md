@@ -8,8 +8,7 @@ automatic failover across all of them, and every run is a re-verifiable,
 git-anchored trajectory. Stdlib only.
 
 ```
-# v0.2.3 source pin
-python -m pip install "relay-agent @ git+https://github.com/HarperZ9/relay.git@252e781de7fce6367dca0f293852cc9f22356878"
+python -m pip install flywheel-relay
 
 relay --health --online                    # which model tiers are live?
 relay "explain this function" --file app.py
@@ -17,10 +16,14 @@ relay --agent "fix the off-by-one in paginate()" --root . --allow-write --auto-c
 relay --mcp                                # serve the agent to any MCP client
 ```
 
-For release installs, use a pinned HarperZ9 GitHub commit or a hash-verified
-GitHub Release wheel. Missing checksum entries or hash mismatches stop before
-`pip install`. Do not use the bare PyPI name `relay-agent`; that public
-namespace is not the HarperZ9 Relay distribution. See
+Relay publishes to PyPI as `flywheel-relay`, with PEP 740 attestations recording
+which workflow built the bytes. The bare name `relay-agent` belongs to an
+unrelated project and is not this distribution.
+
+If you would rather verify the bytes yourself than trust the index, the
+hash-verified path still works and is still supported: a pinned HarperZ9 GitHub
+commit or a GitHub Release wheel, where a missing checksum entry or a hash
+mismatch stops before `pip install`. See
 [`docs/GITHUB-ONLY-INSTALL.md`](docs/GITHUB-ONLY-INSTALL.md).
 
 ## Reaches every endpoint (with your own credentials)

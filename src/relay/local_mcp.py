@@ -20,7 +20,7 @@ from .local_tools import ToolExecutor, ToolGate
 from .remote_state import remote_state
 
 PROTOCOL = "2025-06-18"
-__version__ = "0.2.3"
+__version__ = "0.2.5"
 
 # Background runs, so a phone can start a long agentic task and poll it instead of
 # holding one blocking HTTP request open across a flaky mobile network. With

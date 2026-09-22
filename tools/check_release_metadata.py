@@ -56,8 +56,20 @@ def _top_changelog_section(changelog: str) -> tuple[str, str]:
     return first.group(1).strip(), changelog[first.end():end]
 
 
+def _collapse(text: str) -> str:
+    """Whitespace-normalized text, so a needle can span a wrapped line.
+
+    Prose in these documents is hard-wrapped, so a phrase the guard cares about
+    is regularly split across two lines. Matching the raw text makes the guard
+    fail on a reflow that changed no words, which trains people to weaken the
+    needle rather than fix the document. Collapsing runs of whitespace to single
+    spaces keeps the guard about wording and not about line width.
+    """
+    return " ".join(text.split())
+
+
 def _require_contains(text: str, needle: str, relative: str) -> None:
-    if needle not in text:
+    if _collapse(needle) not in _collapse(text):
         raise GuardError(f"{relative}: expected {needle!r}")
 
 
@@ -90,6 +102,7 @@ def check(root: Path, expected_version: str | None = None) -> list[str]:
         heading, top_section = _top_changelog_section(_read(root, "CHANGELOG.md"))
         if not heading.startswith(f"{version},"):
             errors.append(f"CHANGELOG.md: top release heading {heading!r} does not start with {version!r}")
+        flat_section = _collapse(top_section)
         for needle in (
             "Source version metadata is not release",
             "availability proof",
@@ -99,15 +112,15 @@ def check(root: Path, expected_version: str | None = None) -> list[str]:
             "Do not publish",
             "bare PyPI name `relay-agent`",
         ):
-            if needle not in top_section:
+            if _collapse(needle) not in flat_section:
                 errors.append(f"CHANGELOG.md: top {version} section expected release availability boundary {needle!r}")
         for forbidden in (
             "Prospective GitHub-only patch release",
             "source metadata only",
             "latest already published",
-            "remains 0.2.2",
+            "remains 0.2.4",
         ):
-            if forbidden in top_section:
+            if _collapse(forbidden) in flat_section:
                 errors.append(f"CHANGELOG.md: top {version} section has stale availability wording {forbidden!r}")
     except GuardError as exc:
         errors.append(str(exc))
@@ -116,9 +129,13 @@ def check(root: Path, expected_version: str | None = None) -> list[str]:
         readme = _read(root, "README.md")
         for needle in (
             "docs/GITHUB-ONLY-INSTALL.md",
-            "Do not use the bare PyPI name `relay-agent`",
-            "not the HarperZ9 Relay distribution",
-            "Missing checksum entries or hash mismatches stop before",
+            # Relay publishes as flywheel-relay. relay-agent on PyPI belongs to
+            # an unrelated project, so the README has to keep saying so even now
+            # that we own a name: the hazard did not go away, it just stopped
+            # being the only option.
+            "python -m pip install flywheel-relay",
+            "`relay-agent` belongs to an unrelated project",
+            "a missing checksum entry or a hash",
         ):
             _require_contains(readme, needle, "README.md")
     except GuardError as exc:
@@ -129,8 +146,8 @@ def check(root: Path, expected_version: str | None = None) -> list[str]:
         for needle in (
             "Do not run `pip install relay-agent`",
             f"tag: v{version}",
-            f"wheel: relay_agent-{version}-py3-none-any.whl",
-            f"sdist: relay_agent-{version}.tar.gz",
+            f"wheel: flywheel_relay-{version}-py3-none-any.whl",
+            f"sdist: flywheel_relay-{version}.tar.gz",
             f"https://github.com/HarperZ9/relay/releases/download/v{version}/<asset-name>",
             "Do not continue to `pip install` if the wheel has no checksum line or the computed hash differs.",
             "& {",
