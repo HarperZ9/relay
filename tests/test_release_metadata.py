@@ -146,7 +146,7 @@ def _run_release_wheel_recipe(tmp_path: Path, checksum_lines: list[str]):
     import hashlib
 
     recipe = _release_wheel_recipe()
-    wheel = tmp_path / "relay_agent-0.2.3-py3-none-any.whl"
+    wheel = tmp_path / "flywheel_relay-0.2.3-py3-none-any.whl"
     wheel.write_bytes(b"fake relay wheel bytes\n")
     actual_hash = hashlib.sha256(wheel.read_bytes()).hexdigest()
     rendered = [line.replace("{actual}", actual_hash) for line in checksum_lines]
@@ -178,13 +178,13 @@ def test_release_wheel_recipe_is_single_stop_on_error_invocation():
 
 
 def test_release_wheel_recipe_installs_after_exactly_one_valid_checksum(tmp_path):
-    line = "{actual}  relay_agent-0.2.3-py3-none-any.whl"
+    line = "{actual}  flywheel_relay-0.2.3-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [line])
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "-m pip install --no-index" in fake_python_log
-    assert "relay_agent-0.2.3-py3-none-any.whl" in fake_python_log
+    assert "flywheel_relay-0.2.3-py3-none-any.whl" in fake_python_log
 
 
 def test_release_wheel_recipe_stops_before_pip_when_checksum_missing(tmp_path):
@@ -196,7 +196,7 @@ def test_release_wheel_recipe_stops_before_pip_when_checksum_missing(tmp_path):
 
 
 def test_release_wheel_recipe_stops_before_pip_when_checksum_mismatches(tmp_path):
-    bad = "0" * 64 + "  relay_agent-0.2.3-py3-none-any.whl"
+    bad = "0" * 64 + "  flywheel_relay-0.2.3-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [bad])
 
@@ -206,7 +206,7 @@ def test_release_wheel_recipe_stops_before_pip_when_checksum_mismatches(tmp_path
 
 
 def test_release_wheel_recipe_stops_before_pip_when_duplicate_same_checksum(tmp_path):
-    line = "{actual}  relay_agent-0.2.3-py3-none-any.whl"
+    line = "{actual}  flywheel_relay-0.2.3-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [line, line])
 
@@ -216,8 +216,8 @@ def test_release_wheel_recipe_stops_before_pip_when_duplicate_same_checksum(tmp_
 
 
 def test_release_wheel_recipe_stops_before_pip_when_duplicate_conflicting_checksum(tmp_path):
-    good = "{actual}  relay_agent-0.2.3-py3-none-any.whl"
-    bad = "0" * 64 + "  relay_agent-0.2.3-py3-none-any.whl"
+    good = "{actual}  flywheel_relay-0.2.3-py3-none-any.whl"
+    bad = "0" * 64 + "  flywheel_relay-0.2.3-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [good, bad])
 

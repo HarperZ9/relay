@@ -1,12 +1,13 @@
 # GitHub-only install guidance
 
-Relay's Python package metadata currently uses the distribution name
-`relay-agent`, but the public PyPI namespace with that name is not the HarperZ9
-Relay distribution. Do not run `pip install relay-agent` and do not document it
-as a Relay install path.
+Relay publishes to PyPI as `flywheel-relay`. The public PyPI namespace
+`relay-agent` belongs to an unrelated project and is not the HarperZ9 Relay
+distribution. Do not run `pip install relay-agent` and do not document it as a
+Relay install path.
 
-Use one of these GitHub-pinned paths after the release owner has committed and
-published the release.
+`pip install flywheel-relay` is the ordinary path and carries PEP 740
+attestations. The GitHub-pinned paths below exist for anyone who would rather
+verify the bytes themselves than trust the index.
 
 ## Source pin
 
@@ -14,11 +15,11 @@ Replace `<accepted-commit>` with the reviewed commit SHA from
 `https://github.com/HarperZ9/relay`.
 
 ```bash
-python -m pip install "relay-agent @ git+https://github.com/HarperZ9/relay.git@<accepted-commit>"
+python -m pip install "flywheel-relay @ git+https://github.com/HarperZ9/relay.git@<accepted-commit>"
 ```
 
-This still installs a package whose local metadata name is `relay-agent`, but the
-source is pinned to HarperZ9 GitHub. The commit SHA is the authority; omitting it
+This installs the same distribution, `flywheel-relay`, with the source pinned to
+HarperZ9 GitHub. The commit SHA is the authority; omitting it
 turns the install into a moving target.
 
 ## Release wheel
@@ -28,8 +29,8 @@ release page. Example 0.2.3 release asset names:
 
 ```text
 tag: v0.2.3
-wheel: relay_agent-0.2.3-py3-none-any.whl
-sdist: relay_agent-0.2.3.tar.gz
+wheel: flywheel_relay-0.2.3-py3-none-any.whl
+sdist: flywheel_relay-0.2.3.tar.gz
 sha256: <release-sha256-from-SHA256SUMS.txt>
 url: https://github.com/HarperZ9/relay/releases/download/v0.2.3/<asset-name>
 ```
@@ -39,7 +40,7 @@ Verify the hash before installing. Do not continue to `pip install` if the wheel
 ```powershell
 & {
   $ErrorActionPreference = "Stop"
-  $wheel = "relay_agent-0.2.3-py3-none-any.whl"
+  $wheel = "flywheel_relay-0.2.3-py3-none-any.whl"
   $pattern = "^[0-9a-fA-F]{64}\s+$([regex]::Escape($wheel))$"
   $matches = @(Select-String -LiteralPath ".\SHA256SUMS.txt" -Pattern $pattern)
   if ($matches.Count -ne 1) { throw "expected exactly one SHA256SUMS entry for $wheel; found $($matches.Count)" }
@@ -51,4 +52,5 @@ Verify the hash before installing. Do not continue to `pip install` if the wheel
 ```
 
 This path does not query PyPI. If a future release moves to a new verified
-package namespace, update this page and the release notes before publishing.
+package namespace, update this page, tools/check_release_metadata.py and the
+release notes before publishing. That guard is what makes this page stay true.
