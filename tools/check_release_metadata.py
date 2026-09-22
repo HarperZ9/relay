@@ -102,6 +102,7 @@ def check(root: Path, expected_version: str | None = None) -> list[str]:
         heading, top_section = _top_changelog_section(_read(root, "CHANGELOG.md"))
         if not heading.startswith(f"{version},"):
             errors.append(f"CHANGELOG.md: top release heading {heading!r} does not start with {version!r}")
+        flat_section = _collapse(top_section)
         for needle in (
             "Source version metadata is not release",
             "availability proof",
@@ -111,15 +112,15 @@ def check(root: Path, expected_version: str | None = None) -> list[str]:
             "Do not publish",
             "bare PyPI name `relay-agent`",
         ):
-            if needle not in top_section:
+            if _collapse(needle) not in flat_section:
                 errors.append(f"CHANGELOG.md: top {version} section expected release availability boundary {needle!r}")
         for forbidden in (
             "Prospective GitHub-only patch release",
             "source metadata only",
             "latest already published",
-            "remains 0.2.2",
+            "remains 0.2.4",
         ):
-            if forbidden in top_section:
+            if _collapse(forbidden) in flat_section:
                 errors.append(f"CHANGELOG.md: top {version} section has stale availability wording {forbidden!r}")
     except GuardError as exc:
         errors.append(str(exc))

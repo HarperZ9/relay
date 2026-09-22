@@ -1,3 +1,4 @@
+import re
 import os
 import shutil
 import subprocess
@@ -7,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "tools" / "check_release_metadata.py"
-EXPECTED_VERSION = "0.2.3"
+EXPECTED_VERSION = "0.2.5"
 
 
 def _run_guard(root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -48,7 +49,7 @@ def test_release_metadata_guard_rejects_stale_github_release_example(tmp_path):
     root = _copy_release_files(tmp_path)
     guide = root / "docs" / "GITHUB-ONLY-INSTALL.md"
     guide.write_text(
-        guide.read_text(encoding="utf-8").replace("v0.2.3", "v0.2.2"),
+        guide.read_text(encoding="utf-8").replace("v0.2.5", "v0.2.4"),
         encoding="utf-8",
     )
 
@@ -56,14 +57,14 @@ def test_release_metadata_guard_rejects_stale_github_release_example(tmp_path):
 
     assert result.returncode == 1
     assert "docs/GITHUB-ONLY-INSTALL.md" in result.stderr
-    assert "0.2.3" in result.stderr
+    assert "0.2.5" in result.stderr
 
 
 def test_release_metadata_guard_rejects_package_version_mismatch(tmp_path):
     root = _copy_release_files(tmp_path)
     project = root / "pyproject.toml"
     project.write_text(
-        project.read_text(encoding="utf-8").replace('version = "0.2.3"', 'version = "0.2.2"'),
+        project.read_text(encoding="utf-8").replace('version = "0.2.5"', 'version = "0.2.4"'),
         encoding="utf-8",
     )
 
@@ -71,20 +72,34 @@ def test_release_metadata_guard_rejects_package_version_mismatch(tmp_path):
 
     assert result.returncode == 1
     assert "pyproject.toml" in result.stderr
-    assert "0.2.3" in result.stderr
+    assert "0.2.5" in result.stderr
 
 
 
 def test_release_metadata_guard_rejects_temporary_availability_language(tmp_path):
     root = _copy_release_files(tmp_path)
     changelog = root / "CHANGELOG.md"
-    changelog.write_text(
-        changelog.read_text(encoding="utf-8").replace(
-            "Source version metadata is not release\navailability proof; release availability is established only by the accepted Git\ntag, uploaded GitHub Release assets, and matching hash readback.",
-            "This is prospective 0.2.3 source metadata only. The latest already published GitHub Release remains 0.2.2 until the release owner publishes 0.2.3 assets.",
-        ),
-        encoding="utf-8",
+    # Matched by regex with \s+ between words rather than as a literal block:
+    # the CHANGELOG is hard-wrapped, so a literal match silently does nothing the
+    # moment a line is reflowed, and the test then passes an unmodified file to
+    # the guard and asserts a rejection that cannot happen.
+    original = changelog.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r"Source\s+version\s+metadata\s+is\s+not\s+release\s+availability\s+proof;\s+"
+        r"release\s+availability\s+is\s+established\s+only\s+by\s+the\s+accepted\s+Git\s+"
+        r"tag,\s+uploaded\s+GitHub\s+Release\s+assets,\s+and\s+matching\s+hash\s+readback\."
     )
+    # count=1: every past release section repeats this sentence, and the guard
+    # only inspects the top one. Replacing the first occurrence is what makes the
+    # top section stale, which is the condition under test.
+    replaced, count = pattern.subn(
+        "This is prospective 0.2.5 source metadata only. The latest already published "
+        "GitHub Release remains 0.2.4 until the release owner publishes 0.2.5 assets.",
+        original,
+        count=1,
+    )
+    assert count == 1, "the availability-boundary sentence was not found to replace"
+    changelog.write_text(replaced, encoding="utf-8")
 
     result = _run_guard(root)
 
@@ -146,7 +161,7 @@ def _run_release_wheel_recipe(tmp_path: Path, checksum_lines: list[str]):
     import hashlib
 
     recipe = _release_wheel_recipe()
-    wheel = tmp_path / "flywheel_relay-0.2.3-py3-none-any.whl"
+    wheel = tmp_path / "flywheel_relay-0.2.5-py3-none-any.whl"
     wheel.write_bytes(b"fake relay wheel bytes\n")
     actual_hash = hashlib.sha256(wheel.read_bytes()).hexdigest()
     rendered = [line.replace("{actual}", actual_hash) for line in checksum_lines]
@@ -178,13 +193,13 @@ def test_release_wheel_recipe_is_single_stop_on_error_invocation():
 
 
 def test_release_wheel_recipe_installs_after_exactly_one_valid_checksum(tmp_path):
-    line = "{actual}  flywheel_relay-0.2.3-py3-none-any.whl"
+    line = "{actual}  flywheel_relay-0.2.5-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [line])
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "-m pip install --no-index" in fake_python_log
-    assert "flywheel_relay-0.2.3-py3-none-any.whl" in fake_python_log
+    assert "flywheel_relay-0.2.5-py3-none-any.whl" in fake_python_log
 
 
 def test_release_wheel_recipe_stops_before_pip_when_checksum_missing(tmp_path):
@@ -196,7 +211,7 @@ def test_release_wheel_recipe_stops_before_pip_when_checksum_missing(tmp_path):
 
 
 def test_release_wheel_recipe_stops_before_pip_when_checksum_mismatches(tmp_path):
-    bad = "0" * 64 + "  flywheel_relay-0.2.3-py3-none-any.whl"
+    bad = "0" * 64 + "  flywheel_relay-0.2.5-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [bad])
 
@@ -206,7 +221,7 @@ def test_release_wheel_recipe_stops_before_pip_when_checksum_mismatches(tmp_path
 
 
 def test_release_wheel_recipe_stops_before_pip_when_duplicate_same_checksum(tmp_path):
-    line = "{actual}  flywheel_relay-0.2.3-py3-none-any.whl"
+    line = "{actual}  flywheel_relay-0.2.5-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [line, line])
 
@@ -216,8 +231,8 @@ def test_release_wheel_recipe_stops_before_pip_when_duplicate_same_checksum(tmp_
 
 
 def test_release_wheel_recipe_stops_before_pip_when_duplicate_conflicting_checksum(tmp_path):
-    good = "{actual}  flywheel_relay-0.2.3-py3-none-any.whl"
-    bad = "0" * 64 + "  flywheel_relay-0.2.3-py3-none-any.whl"
+    good = "{actual}  flywheel_relay-0.2.5-py3-none-any.whl"
+    bad = "0" * 64 + "  flywheel_relay-0.2.5-py3-none-any.whl"
 
     result, fake_python_log = _run_release_wheel_recipe(tmp_path, [good, bad])
 

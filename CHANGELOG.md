@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.5, 2026-09-22
+
+Relay now publishes to PyPI as `flywheel-relay`. The install command changes, so
+this is a release rather than a metadata edit.
+
+Source version metadata is not release availability proof; release availability
+is established only by the accepted Git tag, uploaded GitHub Release assets, and
+matching hash readback. Do not publish or recommend the bare PyPI name
+`relay-agent`; that public namespace belongs to an unrelated project and is not
+the HarperZ9 Relay distribution.
+
+### Changed
+
+- The distribution name is `flywheel-relay`. `pip install flywheel-relay` is the
+  documented path, and releases carry PEP 740 attestations recording which
+  workflow built the bytes. The import name, the module layout and the `relay`
+  console script are unchanged.
+- The hash-verified GitHub route is kept and still supported, for anyone who
+  would rather check the bytes than trust an index. See
+  `docs/GITHUB-ONLY-INSTALL.md`, updated for the new asset names.
+- `tools/check_release_metadata.py` compares whitespace-normalized text, so a
+  phrase split across a wrapped line no longer fails a guard that no change in
+  wording had broken.
+
+### Note
+
+0.2.4 was never released. A stray `v0.2.4` tag points at a commit that is not on
+main and whose own `pyproject.toml` reads 0.1.0, so this release skips that
+number rather than reusing it.
+
 ## 0.2.3, 2026-09-17
 
 Status: GitHub-only patch release. Source version metadata is not release
