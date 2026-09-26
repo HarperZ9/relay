@@ -13,7 +13,8 @@ python -m pip install flywheel-relay
 relay --health --online                    # which model tiers are live?
 relay "explain this function" --file app.py
 relay --agent "fix the off-by-one in paginate()" --root . --allow-write --auto-commit
-relay --mcp                                # serve the agent to any MCP client
+relay --mcp                                # serve the agent to any MCP client (read-only)
+relay --mcp --allow-write                  # ...and let its runs write under the launch root
 ```
 
 Relay publishes to PyPI as `flywheel-relay`, with PEP 740 attestations recording
@@ -275,12 +276,55 @@ verifier names them unverifiable and stops there.
 client) at it to use relay as a fallback tier, e.g. keep working on local models
 when a hosted quota runs out.
 
+Write, exec and the root belong to whoever starts the server. Write and exec
+are off by default, the root defaults to the directory the server starts in, and
+a tool call cannot widen any of them:
+
+```
+relay --mcp                                # runs read and list files under the launch root
+relay --mcp --allow-write                  # runs that ask may also write there
+relay --mcp --allow-exec                   # runs that ask may also use a shell (implies write)
+relay --mcp --root ~/work                  # runs stay inside ~/work
+RELAY_ALLOW_EXEC=1 RELAY_MCP_ROOT=~/work relay --mcp    # grants from the environment
+```
+
+A flag or its variable grants; `1`, `true`, `yes` and `on` count as on, and an
+unrecognized value stops the server at launch rather than guessing. A run gets
+what it asks for and the launch granted, both: `local_agent_run` and
+`local_agent_start` ask with `allow_write: true` or `allow_exec: true`, an
+omitted argument asks for nothing (as in 0.2.5), and `true` cannot grant what
+the launch did not. `allow_exec: true` also asks for write, and
+`allow_write: false` turns exec off, because a shell can write. `check`,
+`test_cmd` and the online `codex` and `claude` CLI tiers reach a shell, so they
+need exec; a run that sets `check` without it is refused with
+`EXEC_NOT_GRANTED`. A run's `root` must resolve inside the launch root, or the
+call is refused with `ROOT_NOT_GRANTED`. `relay.status` and `relay.doctor`
+report the grants and the launch root, and background runs keep the gate and
+root they started with through `local_agent_status` and `local_agent_result`.
+
+The file tools also leave the server's own files alone: they never read the env
+file the remote entrypoint uses (`RELAY_ENV_FILE`, default `.env`), and never
+write it, the run store (`RELAY_RUN_ROOT`), the session store
+(`RELAY_SESSION_DIR`) or anything under a `.git` directory.
+
+The limits to plan around: the shell is not path-confined. With exec granted,
+`run`, `test_cmd` and `check` start in `root` and can read and write any path
+the server's user can. Write is also a route to code execution: a file written
+under the root runs the next time something executes it there, such as a build
+script, a test, or a shell profile when the root is a home directory. Launch the
+server over a workspace you would let its callers edit, not over relay's own
+checkout or your home directory, and grant exec only to a server whose callers
+you would trust with that account.
+
 The MCP run tools accept the same bounded routing and acceptance dials as the
 local CLI agent path: `backend`, `model`, `max_tokens`, `check`, `test_cmd`, and
 `compact_budget`, in addition to `goal`, `root`, `allow_write`, `allow_exec`,
-`max_steps`, and `online`. Results carry a request binding with the admitted
-effective backend/model/gate choices, including that exec implies write, and
-hashes of the goal/check commands. Results also include the last witnessed
+`max_steps`, and `online`. Results carry a `relay.mcp-run-request/v2` binding
+with the admitted effective backend/model/gate choices, the launch grants
+(`granted_allow_write`, `granted_allow_exec`, `granted_root`), the arguments as
+sent (`null` when omitted), what was asked beyond the grant
+(`grant_shortfall`), whether the remote surface refused exec, the protected
+paths, and hashes of the goal/check commands. Results also include the last witnessed
 assistant backend/model receipt when a run reaches the agent loop.
 
 For background runs, set `RELAY_RUN_ROOT` to make progress durable across a

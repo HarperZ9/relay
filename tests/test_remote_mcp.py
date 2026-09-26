@@ -109,10 +109,13 @@ def test_absent_origin_with_allowlist_still_passes():
 # --- remote-exec posture ---
 
 def _capture():
+    from relay.mcp_grants import SURFACE_EXEC_REFUSED
+
     seen = {}
 
     def h(req):
         seen["req"] = json.loads(json.dumps(req))  # snapshot as handle sees it
+        seen["exec_refused"] = SURFACE_EXEC_REFUSED.get()
         return {"jsonrpc": "2.0", "id": req.get("id"), "result": {"ok": True}}
 
     return seen, h
@@ -124,9 +127,10 @@ def test_remote_exec_is_refused_by_default():
     _post(cfg, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "local_agent_run",
                            "arguments": {"goal": "x", "allow_exec": True, "allow_write": True}}})
-    args = seen["req"]["params"]["arguments"]
-    assert args["allow_exec"] is False  # exec forced off on the remote surface
-    assert args["allow_write"] is True  # write stays a per-call opt-in
+    assert seen["exec_refused"] is True  # exec refused on the remote surface
+    # the caller's arguments reach the server as sent; the binding records them
+    assert seen["req"]["params"]["arguments"] == {"goal": "x", "allow_exec": True,
+                                                  "allow_write": True}
 
 
 def test_remote_exec_allowed_when_pc_opts_in():
@@ -135,20 +139,18 @@ def test_remote_exec_allowed_when_pc_opts_in():
     _post(cfg, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "local_agent_run",
                            "arguments": {"goal": "x", "allow_exec": True}}})
-    assert seen["req"]["params"]["arguments"]["allow_exec"] is True
+    assert seen["exec_refused"] is False
 
 
 def test_background_start_also_has_exec_forced_off_by_default():
     # local_agent_start carries the same exec risk as local_agent_run, so the
-    # remote posture must scrub it too -- otherwise the async path is an exec bypass.
+    # remote posture must refuse it too -- otherwise the async path is an exec bypass.
     seen, h = _capture()
     cfg = _cfg(handle=h)  # allow_remote_exec defaults False
     _post(cfg, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "local_agent_start",
                            "arguments": {"goal": "x", "allow_exec": True, "allow_write": True}}})
-    args = seen["req"]["params"]["arguments"]
-    assert args["allow_exec"] is False
-    assert args["allow_write"] is True  # write stays a per-call opt-in
+    assert seen["exec_refused"] is True
 
 
 # --- env config + real socket ---
