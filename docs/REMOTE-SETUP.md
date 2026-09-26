@@ -121,9 +121,12 @@ IPv4 (no CGNAT) and your own cert.
 
 Open the Claude app → in a chat tap **+ → Connectors → toggle `relay` on**. Ask
 Claude to use the relay tools (`local_agent_run`, `local_agent_chat`,
-`relay.status`, …). Writes are opt-in per run; remote exec is **off** unless you
-set `RELAY_ALLOW_REMOTE_EXEC=true` on the PC (relay's shell is not confined to the
-workspace root — enable it only deliberately).
+`relay.status`, …). Writes are **off** unless you set `RELAY_ALLOW_WRITE=true` on
+the PC; a call can then turn writes off for one run but cannot turn them on
+itself. Remote exec is **off** unless you set both `RELAY_ALLOW_EXEC=true` and
+`RELAY_ALLOW_REMOTE_EXEC=true` on the PC. relay's shell is not path-confined: it
+starts in the run's root and can reach any path your account can, so enable it
+only deliberately.
 
 ---
 

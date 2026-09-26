@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.3.0, 2026-09-26
+
+Write and exec grants for the MCP servers move from tool arguments to launch
+configuration. This changes what an existing MCP call does, so it is a minor
+release rather than a patch: a client that sent `allow_write: true` or
+`allow_exec: true` to a server started without the grant now runs with it off.
+Relay is pre-1.0, where a breaking change takes the minor number.
+
+Source version metadata is not release availability proof; release availability
+is established only by the accepted Git tag, uploaded GitHub Release assets, and
+matching hash readback. Do not publish or recommend the bare PyPI name
+`relay-agent`; that public namespace belongs to an unrelated project and is not
+the HarperZ9 Relay distribution.
+
+### Changed
+
+- `relay --mcp` takes write and exec from its launch: `--allow-write` and
+  `--allow-exec`, or `RELAY_ALLOW_WRITE` and `RELAY_ALLOW_EXEC`. Both are off by
+  default. `python -m relay.local_mcp` reads the variables, and the remote
+  entrypoint reads them from its environment and `.env` file. An unrecognized
+  value stops the server at launch.
+- The `allow_write` and `allow_exec` arguments on `local_agent_run` and
+  `local_agent_start` only narrow the launch grants for one run. An omitted
+  argument keeps the launch grant, and `allow_write: false` also turns exec off.
+- `check` runs a shell outside the tool gate, so an MCP run that sets it needs
+  the exec grant and is refused with `EXEC_NOT_GRANTED` otherwise. Before this
+  release a caller could reach a shell through `check` with exec off.
+- On the remote surface, exec needs both `RELAY_ALLOW_EXEC` and
+  `RELAY_ALLOW_REMOTE_EXEC`, and writes need `RELAY_ALLOW_WRITE`. The remote exec
+  guard now sets `allow_exec` off on every run and start call, because an omitted
+  argument would otherwise inherit the launch grant.
+- The request binding is `relay.mcp-run-request/v2`. It adds
+  `granted_allow_write` and `granted_allow_exec`, and reports
+  `requested_allow_write` and `requested_allow_exec` as `null` when omitted.
+- `relay.status` and `relay.doctor` report the launch grants, and the remote
+  readout reports them as `start_grants`.
+
+### Limits
+
+- The file tools are confined to the run's root. The shell is not
+  path-confined: with exec granted, `run`, `test_cmd` and `check` start in root
+  and can reach any path the server's user can. The tool descriptions and the
+  README say so.
+- Background runs keep the gate they started with. Changing the grants needs a
+  server restart.
+
 ## 0.2.5, 2026-09-22
 
 Relay now publishes to PyPI as `flywheel-relay`. The install command changes, so

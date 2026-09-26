@@ -185,3 +185,14 @@ def test_keys_present_is_booleans_only():
     assert set(present) == set(PRESENCE_ONLY)
     assert all(v is True for v in present.values())
     assert all(v is False for v in _state({})["keys_present"].values())
+
+
+def test_the_launch_grants_are_read_out_and_a_bad_value_is_named():
+    # remote_cli configures write/exec from these keys, so the readout reports
+    # what the surface would grant, and a typo reads as an error, not as off.
+    state = _state({"RELAY_REMOTE_TOKEN": "t", "RELAY_ALLOW_WRITE": "1"})
+    assert state["start_grants"] == {"allow_write": True, "allow_exec": False,
+                                     "shell_path_confined": False}
+    assert _state({})["start_grants"]["allow_exec"] is False
+    bad = _state({"RELAY_ALLOW_EXEC": "maybe"})["start_grants"]
+    assert "RELAY_ALLOW_EXEC" in bad["error"]

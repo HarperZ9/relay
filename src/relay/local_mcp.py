@@ -4,6 +4,8 @@ So any harness (Claude Code included) can call this agent as a tool: check which
 tiers are live, get a one-shot completion, or run a gated agentic task with a
 witnessed ledger. Zero-dep stdio JSON-RPC 2.0, the shape every flagship speaks.
 `handle()` is transport-free and testable; `serve()` is the thin stdio loop.
+Write and exec are granted by whoever starts the server (see mcp_grants); a tool
+argument can only narrow them.
 """
 from __future__ import annotations
 
@@ -17,65 +19,26 @@ from .local_agent import LocalAgent, available_backends, health_report
 from .local_loop import run_agent
 from .local_session import SessionLedger
 from .local_tools import ToolExecutor, ToolGate
+from .mcp_grants import StartGrants, grants_from_env, narrow
+from .mcp_schema import TOOLS
 from .remote_state import remote_state
 
 PROTOCOL = "2025-06-18"
-__version__ = "0.2.5"
+__version__ = "0.3.0"
 
 # Background runs, so a phone can start a long agentic task and poll it instead of
 # holding one blocking HTTP request open across a flaky mobile network. With
 # RELAY_RUN_ROOT set, runs persist so a run_id survives a server restart.
 RUNS = RunRegistry(run_root=os.environ.get("RELAY_RUN_ROOT") or None)
 
-_ONLINE = {"online": {"type": "boolean", "description": "include codex/claude/gemini/deepseek"}}
-_RUN_ID = {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "string"}}}
-_RUN_OPTIONS = {
-    "backend": {"type": "string", "description": "preferred backend name, or auto"},
-    "model": {"type": "string", "description": "model hint passed to model-aware backends"},
-    "max_tokens": {"type": "integer", "description": "per-turn generation token cap"},
-    "check": {"type": "string", "description": "acceptance command to run through the gated executor"},
-    "test_cmd": {"type": "string", "description": "fallback test command when no tool calls run"},
-    "compact_budget": {"type": "integer", "description": "optional prompt compaction budget"},
-}
-_RUN_ARGS = {"type": "object", "required": ["goal"],
-             "properties": {"goal": {"type": "string"}, "root": {"type": "string"},
-                            "allow_write": {"type": "boolean"}, "allow_exec": {"type": "boolean"},
-                            "max_steps": {"type": "integer"}, **_RUN_OPTIONS, **_ONLINE}}
+# The most any run may do, fixed at launch by serve() or a launcher. Off until then.
+_GRANTS = StartGrants()
 
-TOOLS = [
-    {"name": "local_agent_health",
-     "description": "Report which model tiers are live (local serve/ollama, plus online providers when online=true).",
-     "inputSchema": {"type": "object", "properties": dict(_ONLINE)}},
-    {"name": "local_agent_chat",
-     "description": "One-shot completion from the first healthy tier, with a per-turn receipt.",
-     "inputSchema": {"type": "object", "required": ["prompt"],
-                     "properties": {"prompt": {"type": "string"},
-                                    "backend": {"type": "string"}, **_ONLINE}}},
-    {"name": "local_agent_run",
-     "description": "Run a gated agentic task; write/exec off unless allowed. File tools (read/list/write) are confined to root; run/exec sets only cwd, so an allowed shell is NOT path-confined and can reach outside root. allow_exec implies write (a shell can write). Returns the final answer and a verifiable ledger checkpoint. BLOCKS until done -- for a phone or a flaky link, prefer local_agent_start.",
-     "inputSchema": _RUN_ARGS},
-    {"name": "local_agent_start",
-     "description": "Start a gated agentic task in the BACKGROUND and return a run_id at once (does not block). Same gate as local_agent_run (write/exec off unless allowed). Poll local_agent_status for live progress, then local_agent_result for the verified final answer. With RELAY_RUN_ROOT, witnessed progress checkpoints survive a restart as interrupted partial runs. Use this from a phone or over a flaky network, where a blocking run would drop.",
-     "inputSchema": _RUN_ARGS},
-    {"name": "local_agent_status",
-     "description": "Progress of a background run: state (running/done/error/interrupted), the step count so far, and the latest witnessed ledger entries.",
-     "inputSchema": _RUN_ID},
-    {"name": "local_agent_result",
-     "description": "The verified final answer and ledger checkpoint of a background run once it is done; reports 'running' until then.",
-     "inputSchema": _RUN_ID},
-    {"name": "local_agent_runs",
-     "description": "List recent background runs (newest first) with state, timing, and step count, so a phone that lost a run_id after a restart can find it again. Persisted runs (RELAY_RUN_ROOT) survive a restart; a run cut off mid-flight lists as 'interrupted'.",
-     "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 0}}}},
-    {"name": "local_agent_sessions",
-     "description": "List saved relay sessions (witnessed ledgers under RELAY_SESSION_DIR) so a session started on the PC can be reopened from another device; each is re-verified on load. Pass session_id to get that session's transcript.",
-     "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}}},
-    {"name": "relay.status",
-     "description": "Liveness and identity of the relay MCP server (name, version, protocol). Network-free, for a fast health probe.",
-     "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "relay.doctor",
-     "description": "Readiness diagnostic: identity plus the local model tiers configured (serve, ollama) and the tools exposed. Network-free; use local_agent_health to actually ping tiers.",
-     "inputSchema": {"type": "object", "properties": {}}},
-]
+
+def configure(grants: StartGrants) -> None:
+    """Set the launch grants. Runs already started keep the gate they began with."""
+    global _GRANTS
+    _GRANTS = grants
 
 
 class MCPInputError(ValueError):
@@ -92,6 +55,10 @@ def _as_bool(args: dict, name: str) -> bool:
     if type(val) is bool:
         return val
     raise MCPInputError("INVALID_ARGUMENT", f"{name} must be a boolean")
+
+
+def _as_opt_bool(args: dict, name: str) -> bool | None:
+    return _as_bool(args, name) if name in args else None
 
 
 def _as_int(args: dict, name: str, default: int) -> int:
@@ -123,12 +90,12 @@ def _request_binding(args: dict) -> dict:
     root = _as_str(args, "root", ".") or "."
     check = _as_str(args, "check", "")
     test_cmd = _as_str(args, "test_cmd", "")
-    requested_allow_write = _as_bool(args, "allow_write")
-    requested_allow_exec = _as_bool(args, "allow_exec")
-    gate = ToolGate(allow_write=requested_allow_write,
-                    allow_exec=requested_allow_exec)
+    requested_allow_write = _as_opt_bool(args, "allow_write")
+    requested_allow_exec = _as_opt_bool(args, "allow_exec")
+    write, exec_ = narrow(_GRANTS, requested_allow_write, requested_allow_exec)
+    gate = ToolGate(allow_write=write, allow_exec=exec_)
     binding = {
-        "schema": "relay.mcp-run-request/v1",
+        "schema": "relay.mcp-run-request/v2",
         "goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest(),
         "root": root,
         "backend": backend,
@@ -137,6 +104,8 @@ def _request_binding(args: dict) -> dict:
         "allow_exec": gate.allow_exec,
         "requested_allow_write": requested_allow_write,
         "requested_allow_exec": requested_allow_exec,
+        "granted_allow_write": _GRANTS.allow_write,
+        "granted_allow_exec": _GRANTS.allow_exec,
         "online": _as_bool(args, "online"),
         "max_steps": _as_int(args, "max_steps", 6),
         "max_tokens": _as_int(args, "max_tokens", 512),
@@ -148,6 +117,13 @@ def _request_binding(args: dict) -> dict:
         binding["check_sha256"] = hashlib.sha256(check.encode("utf-8")).hexdigest()
     if test_cmd:
         binding["test_cmd_sha256"] = hashlib.sha256(test_cmd.encode("utf-8")).hexdigest()
+    if check and not gate.allow_exec:
+        # check runs through a shell outside the tool gate. Over MCP the caller is
+        # not the operator, so without the exec grant it would be an exec bypass.
+        raise MCPInputError("EXEC_NOT_GRANTED",
+                            "check runs a shell command and this run has no exec grant "
+                            "(start the server with --allow-exec or RELAY_ALLOW_EXEC=1)",
+                            request_binding=binding)
     return binding
 
 
@@ -278,7 +254,8 @@ def _call(params: dict) -> dict:
             sid = args.get("session_id")
             return _text(get_session(sdir, sid) if sid else list_sessions(sdir))
         if name in ("relay.status", "relay.doctor"):
-            info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL}
+            info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL,
+                    "grants": _GRANTS.as_dict()}
             if name == "relay.doctor":
                 info["local_tiers"] = [type(b).__name__ for b in available_backends()]
                 info["tools"] = [t["name"] for t in TOOLS]
@@ -340,7 +317,10 @@ def handle(req: dict):
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
 
-def serve(stdin=None, stdout=None) -> int:
+def serve(stdin=None, stdout=None, grants: StartGrants | None = None) -> int:
+    """Serve stdio JSON-RPC. ``grants`` come from the launcher; with none passed,
+    RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC decide, and both default to off."""
+    configure(grants if grants is not None else grants_from_env(os.environ))
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     for line in stdin:
         line = line.strip()
@@ -359,5 +339,14 @@ def serve(stdin=None, stdout=None) -> int:
     return 0
 
 
+def main() -> int:
+    try:
+        grants = grants_from_env(os.environ)
+    except ValueError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 2
+    return serve(grants=grants)
+
+
 if __name__ == "__main__":
-    raise SystemExit(serve())
+    raise SystemExit(main())

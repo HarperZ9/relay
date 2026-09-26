@@ -28,6 +28,7 @@ DEFAULT_ENV_FILE = ".env"
 VALUE_SAFE = frozenset({
     "RELAY_PUBLIC_URL", "RELAY_REMOTE_HOST", "RELAY_REMOTE_PORT",
     "RELAY_ALLOWED_ORIGINS", "RELAY_ALLOW_REMOTE_EXEC",
+    "RELAY_ALLOW_WRITE", "RELAY_ALLOW_EXEC",
 })
 
 # Every other key the remote surface reads. Presence is all that is reported for
@@ -85,6 +86,14 @@ def resolved_env(env: Mapping[str, str] | None = None,
     return {**load_dotenv(path), **env}, path
 
 
+def _start_grants(resolved: Mapping[str, str]) -> dict:
+    from .mcp_grants import grants_from_env
+    try:
+        return grants_from_env(resolved).as_dict()
+    except ValueError as e:
+        return {"error": str(e)}
+
+
 def _origins(raw: str) -> list[str]:
     return sorted({o.strip() for o in raw.split(",") if o.strip()})
 
@@ -112,6 +121,9 @@ def remote_state(env: Mapping[str, str] | None = None,
         "oauth_missing": missing_oauth,
         "tls_configured": present["RELAY_TLS_CERT"] and present["RELAY_TLS_KEY"],
         "remote_exec_allowed": resolved.get("RELAY_ALLOW_REMOTE_EXEC", "").lower() in _TRUE,
+        # The launch grants remote_cli configures; remote exec needs both these
+        # and remote_exec_allowed.
+        "start_grants": _start_grants(resolved),
         "public_url": resolved.get("RELAY_PUBLIC_URL") or None,
         "allowed_origins": _origins(resolved.get("RELAY_ALLOWED_ORIGINS", "")),
         "listen": {"host": resolved.get("RELAY_REMOTE_HOST") or None,

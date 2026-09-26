@@ -279,6 +279,13 @@ def test_local_agent_runs_limit_is_strict(monkeypatch):
         assert body["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def _launch_grants(monkeypatch, **grants):
+    # Write and exec are granted by whoever starts the server, not by arguments.
+    import relay.local_mcp as m
+    from relay.mcp_grants import StartGrants
+    monkeypatch.setattr(m, "_GRANTS", StartGrants(**grants))
+
+
 def _decode_tool(resp):
     return json.loads(resp["result"]["content"][0]["text"])
 
@@ -338,6 +345,7 @@ def test_blocking_run_passes_cli_parity_options_and_returns_request_binding(monk
 
     monkeypatch.setattr(m, "available_backends", fake_available_backends)
     monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    _launch_grants(monkeypatch, allow_write=True, allow_exec=True)
     resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
         "goal": "fix the bug", "root": str(tmp_path), "backend": "stub",
         "model": "stub-model", "max_tokens": 123, "max_steps": 4,
@@ -351,7 +359,7 @@ def test_blocking_run_passes_cli_parity_options_and_returns_request_binding(monk
                     "prefer": "stub", "max_tokens": 123}
     assert captured["model"] == "stub-model"
     binding = body["request_binding"]
-    assert binding["schema"] == "relay.mcp-run-request/v1"
+    assert binding["schema"] == "relay.mcp-run-request/v2"
     assert binding["backend"] == "stub" and binding["model"] == "stub-model"
     assert binding["root"] == str(tmp_path)
     assert binding["allow_write"] is True and binding["allow_exec"] is True
@@ -394,6 +402,7 @@ def test_background_start_passes_cli_parity_options_and_persists_request_binding
 
     monkeypatch.setattr(m, "available_backends", fake_available_backends)
     monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    _launch_grants(monkeypatch, allow_exec=True)
     start = handle(_req("tools/call", params={"name": "local_agent_start", "arguments": {
         "goal": "background fix", "root": str(tmp_path), "backend": "stub",
         "model": "stub-model", "max_tokens": 321, "max_steps": 5,
@@ -438,6 +447,7 @@ def test_exec_grant_binding_reports_effective_write_authority(monkeypatch, tmp_p
 
     monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
     monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    _launch_grants(monkeypatch, allow_exec=True)
     body = _decode_tool(handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
         "goal": "run a shell", "root": str(tmp_path), "backend": "stub",
         "allow_exec": True,
@@ -446,7 +456,7 @@ def test_exec_grant_binding_reports_effective_write_authority(monkeypatch, tmp_p
     assert seen == {"allow_write": True, "allow_exec": True}
     assert body["request_binding"]["allow_exec"] is True
     assert body["request_binding"]["allow_write"] is True
-    assert body["request_binding"]["requested_allow_write"] is False
+    assert body["request_binding"]["requested_allow_write"] is None
 
 
 def test_background_exec_grant_binding_reports_effective_write_authority(monkeypatch, tmp_path):
@@ -466,6 +476,7 @@ def test_background_exec_grant_binding_reports_effective_write_authority(monkeyp
 
     monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
     monkeypatch.setattr(m, "run_agent", fake_run_agent)
+    _launch_grants(monkeypatch, allow_exec=True)
     start = _decode_tool(handle(_req("tools/call", params={"name": "local_agent_start",
                                                            "arguments": {
                                                                "goal": "run a shell",
@@ -473,7 +484,7 @@ def test_background_exec_grant_binding_reports_effective_write_authority(monkeyp
                                                                "allow_exec": True,
                                                            }})))
     assert start["request_binding"]["allow_write"] is True
-    assert start["request_binding"]["requested_allow_write"] is False
+    assert start["request_binding"]["requested_allow_write"] is None
 
     result = {"state": "running"}
     for _ in range(400):
@@ -536,6 +547,7 @@ def test_mcp_check_failure_cannot_be_accepted(monkeypatch, tmp_path):
 
     monkeypatch.setattr(loop.subprocess, "run", fake_run)
     monkeypatch.setattr(m, "available_backends", lambda *, model="": [_McpScriptedBackend(["done"])])
+    _launch_grants(monkeypatch, allow_exec=True)
     resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
         "goal": "answer", "root": str(tmp_path), "backend": "stub", "max_steps": 2,
         "check": "pytest -q",

@@ -13,7 +13,8 @@ python -m pip install flywheel-relay
 relay --health --online                    # which model tiers are live?
 relay "explain this function" --file app.py
 relay --agent "fix the off-by-one in paginate()" --root . --allow-write --auto-commit
-relay --mcp                                # serve the agent to any MCP client
+relay --mcp                                # serve the agent to any MCP client (read-only)
+relay --mcp --allow-write                  # ...and let its runs write under their root
 ```
 
 Relay publishes to PyPI as `flywheel-relay`, with PEP 740 attestations recording
@@ -275,12 +276,39 @@ verifier names them unverifiable and stops there.
 client) at it to use relay as a fallback tier, e.g. keep working on local models
 when a hosted quota runs out.
 
+Write and exec belong to whoever starts the server. Both are off by default,
+and a tool call cannot turn either one on:
+
+```
+relay --mcp                                # runs read and list files only
+relay --mcp --allow-write                  # runs may also write under their root
+relay --mcp --allow-exec                   # runs may also use a shell (implies write)
+RELAY_ALLOW_WRITE=1 RELAY_ALLOW_EXEC=1 relay --mcp   # the same grants from the environment
+```
+
+A flag or its variable grants; `1`, `true`, `yes` and `on` count as on, and an
+unrecognized value stops the server at launch rather than guessing. The
+`allow_write` and `allow_exec` arguments on `local_agent_run` and
+`local_agent_start` only narrow the launch grants for one run: `false` turns a
+grant off, and `true` cannot grant what the launch did not. `allow_write: false`
+also turns exec off, because a shell can write. `check` runs a shell command, so
+a run that sets it needs the exec grant and is refused with `EXEC_NOT_GRANTED`
+without it. `relay.status` and `relay.doctor` report the grants the server
+started with, and background runs keep the grants they started with through
+`local_agent_status` and `local_agent_result`.
+
+The limit to plan around: the file tools are confined to the run's `root`, and
+the shell is not path-confined. With exec granted, `run`, `test_cmd` and `check`
+start in `root` and can read and write any path the server's user can. Grant
+exec only to a server whose callers you would trust with that account.
+
 The MCP run tools accept the same bounded routing and acceptance dials as the
 local CLI agent path: `backend`, `model`, `max_tokens`, `check`, `test_cmd`, and
 `compact_budget`, in addition to `goal`, `root`, `allow_write`, `allow_exec`,
-`max_steps`, and `online`. Results carry a request binding with the admitted
-effective backend/model/gate choices, including that exec implies write, and
-hashes of the goal/check commands. Results also include the last witnessed
+`max_steps`, and `online`. Results carry a `relay.mcp-run-request/v2` binding
+with the admitted effective backend/model/gate choices, the launch grants
+(`granted_allow_write`, `granted_allow_exec`), the narrowing arguments as sent
+(`null` when omitted), and hashes of the goal/check commands. Results also include the last witnessed
 assistant backend/model receipt when a run reaches the agent loop.
 
 For background runs, set `RELAY_RUN_ROOT` to make progress durable across a

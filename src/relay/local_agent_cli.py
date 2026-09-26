@@ -337,6 +337,23 @@ def _architect_mode_error(args) -> str:
             "unsupported with " + ", ".join(unsupported))
 
 
+def _serve_mcp(args) -> int:
+    """Serve MCP with the write/exec grants of this launch: the flags, or
+    RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC. Tool arguments can only narrow them."""
+    import os
+
+    from .mcp_grants import describe, grants_from_launch
+    try:
+        grants = grants_from_launch(allow_write=args.allow_write,
+                                    allow_exec=args.allow_exec, env=os.environ)
+    except ValueError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 2
+    print(f"[relay mcp] {describe(grants)}", file=sys.stderr)
+    from .local_mcp import serve
+    return serve(grants=grants)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="relay", description=__doc__)
     ap.add_argument("prompt", nargs="?", help="one-shot prompt; omit for a REPL")
@@ -357,10 +374,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="run the prompt as an agentic task with gated tools + a witnessed ledger")
     ap.add_argument("--root", default=".", help="root for file tools read/list/write (--agent); "
                     "note run/exec sets only cwd and is NOT confined to root")
-    ap.add_argument("--allow-write", action="store_true", dest="allow_write")
+    ap.add_argument("--allow-write", action="store_true", dest="allow_write",
+                    help="enable file writes under --root; with --mcp, the most any MCP run "
+                    "may do (also RELAY_ALLOW_WRITE)")
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
-                    "and is not path-confined")
+                    "and is not path-confined; with --mcp, the most any MCP run may do "
+                    "(also RELAY_ALLOW_EXEC)")
     ap.add_argument("--interactive", action="store_true",
                     help="with --agent, prompt for approval before every mutating tool call "
                     "(write/edit/run); each decision is recorded as a hash-chained approval "
@@ -444,8 +464,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0 if report["contained"] == report["total"] else 1
     if args.mcp:
-        from .local_mcp import serve
-        return serve()
+        return _serve_mcp(args)
     if args.view:
         from .run_view import load_run, render, verify_edges
         try:

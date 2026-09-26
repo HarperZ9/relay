@@ -126,7 +126,7 @@ def test_remote_exec_is_refused_by_default():
                            "arguments": {"goal": "x", "allow_exec": True, "allow_write": True}}})
     args = seen["req"]["params"]["arguments"]
     assert args["allow_exec"] is False  # exec forced off on the remote surface
-    assert args["allow_write"] is True  # write stays a per-call opt-in
+    assert args["allow_write"] is True  # the posture leaves write to the launch grant
 
 
 def test_remote_exec_allowed_when_pc_opts_in():
@@ -148,7 +148,7 @@ def test_background_start_also_has_exec_forced_off_by_default():
                            "arguments": {"goal": "x", "allow_exec": True, "allow_write": True}}})
     args = seen["req"]["params"]["arguments"]
     assert args["allow_exec"] is False
-    assert args["allow_write"] is True  # write stays a per-call opt-in
+    assert args["allow_write"] is True  # the posture leaves write to the launch grant
 
 
 # --- env config + real socket ---

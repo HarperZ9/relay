@@ -12,10 +12,11 @@ Safety posture, hardened versus the same-machine stdio server:
 - every request must present the configured bearer token (constant-time check);
 - when an allowlist is configured, the Origin header must be on it (the spec's
   DNS-rebinding guard);
-- ``allow_exec`` is refused unless the operator opts in at the PC
+- write and exec are granted at launch (RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC,
+  read by remote_cli), and a call can only narrow them;
+- exec is refused on top of that unless the operator also opts in at the PC
   (RELAY_ALLOW_REMOTE_EXEC), because relay's run/exec is not root-confined.
-``allow_write`` stays a per-call opt-in; the OAuth authorization layer is a later
-increment (a bearer token gates v1).
+The OAuth authorization layer is a later increment (a bearer token gates v1).
 
 ``process()`` is transport-free and fully testable without a socket; the HTTP
 handler and ``serve()`` are the thin transport around it.
@@ -131,13 +132,16 @@ def _authorized(cfg: "RemoteMcpConfig", authorization: str | None) -> bool:
 def _apply_remote_posture(cfg: RemoteMcpConfig, req: dict) -> None:
     """Refuse remote exec unless the operator opted in at the PC. relay's run/exec
     is not root-confined, so an allowed shell reaches outside root; on the remote
-    surface allow_exec is forced off (the run still proceeds, without exec)."""
+    surface allow_exec is forced off (the run still proceeds, without exec). An
+    omitted allow_exec inherits the launch grant, so it is set off explicitly."""
     if cfg.allow_remote_exec:
         return
     params = req.get("params") or {}
+    if not isinstance(params, dict):
+        return
     if req.get("method") == "tools/call" and params.get("name") in ("local_agent_run", "local_agent_start"):
         args = params.get("arguments") or {}
-        if args.get("allow_exec"):
+        if isinstance(args, dict):
             args["allow_exec"] = False
             params["arguments"] = args
             req["params"] = params

@@ -6,6 +6,8 @@ the transport module stays within the size gate.
 """
 from __future__ import annotations
 
+from . import local_mcp
+from .mcp_grants import describe, grants_from_env
 from .remote_mcp import _ENDPOINT, config_from_env, serve
 from .remote_state import resolved_env
 
@@ -23,6 +25,14 @@ def main() -> int:
     if cfg.oauth is not None and not cfg.oauth.base_url.startswith("https://"):
         print(f"error: RELAY_PUBLIC_URL must be an https origin, got {cfg.oauth.base_url!r}")
         return 2
+    try:
+        grants = grants_from_env(env)
+    except ValueError as e:
+        print(f"error: {e}")
+        return 2
+    # The launch grants; a call can only narrow them, and remote exec also needs
+    # RELAY_ALLOW_REMOTE_EXEC.
+    local_mcp.configure(grants)
     host = env.get("RELAY_REMOTE_HOST", "127.0.0.1")
     port = int(env.get("RELAY_REMOTE_PORT", "8787"))
     certfile = env.get("RELAY_TLS_CERT") or None
@@ -30,7 +40,7 @@ def main() -> int:
     server = serve(cfg, host, port, certfile=certfile, keyfile=keyfile)
     scheme = "https" if certfile and keyfile else "http"
     print(f"relay remote MCP on {scheme}://{host}:{port}{_ENDPOINT} "
-          f"(exec {'on' if cfg.allow_remote_exec else 'off'}, "
+          f"({describe(grants)}, remote exec {'on' if cfg.allow_remote_exec else 'off'}, "
           f"origins {'any' if not cfg.allowed_origins else len(cfg.allowed_origins)}, "
           f"oauth {'on' if cfg.oauth is not None else 'off'}, tls {scheme == 'https'})")
     try:
