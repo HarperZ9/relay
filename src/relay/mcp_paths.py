@@ -7,7 +7,7 @@ So an MCP run's file tools also refuse:
 - the env file the remote entrypoint reads (RELAY_ENV_FILE, default ``.env``),
   for reads and writes: it holds the bearer token and the OAuth secrets;
 - writes into the run store (RELAY_RUN_ROOT) and the session store
-  (RELAY_SESSION_DIR), whose records a run could otherwise forge;
+  (RELAY_SESSION_DIR or its per-user default), whose records a run could forge;
 - writes into any ``.git`` directory, where a hook or a config line runs code
   the next time git runs in that tree.
 
@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from .local_tools import WRITE_TOOLS, ToolExecutor, ToolResult, _safe_path, edited_targets
 
 NO_WRITE_NAMES = (".git",)
-_STORE_KEYS = ("RELAY_RUN_ROOT", "RELAY_SESSION_DIR")
+_STORE_KEYS = ("RELAY_RUN_ROOT",)
 
 
 def _canon(path: str) -> str:
@@ -51,8 +51,9 @@ class ProtectedPaths:
 def protected_paths(env: Mapping[str, str]) -> ProtectedPaths:
     """The server's own paths, resolved now against the server's working directory."""
     from .remote_state import env_file_path
+    from .session_store import session_dir
     env_file = _canon(env_file_path(env))
-    stores = tuple(_canon(env[k]) for k in _STORE_KEYS if env.get(k))
+    stores = (*(_canon(env[k]) for k in _STORE_KEYS if env.get(k)), _canon(session_dir(env)))
     return ProtectedPaths(no_read=(env_file,), no_write=(env_file, *stores))
 
 

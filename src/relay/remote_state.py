@@ -85,8 +85,8 @@ def env_file_path(env: Mapping[str, str] | None = None) -> str:
     return env.get("RELAY_ENV_FILE") or DEFAULT_ENV_FILE
 
 
-def resolved_env(env: Mapping[str, str] | None = None,
-                 env_file: str | None = None) -> tuple[dict[str, str], str]:
+def resolved_env(env: Mapping[str, str] | None = None, env_file: str | None = None,
+                 *, read_default: bool = True) -> tuple[dict[str, str], str | None]:
     """The environment the remote server would see, and the file consulted.
 
     Composed exactly as ``remote_cli.main`` composes it: the file first, the real
@@ -94,12 +94,15 @@ def resolved_env(env: Mapping[str, str] | None = None,
     (LAUNCH_ONLY_KEYS) are never taken from the file: a run with the write grant
     can rewrite that file, and would hand itself exec on the next restart. A
     caller that passes ``env`` is asking about that environment rather than this
-    process's.
+    process's. With ``read_default=False`` no file is read unless RELAY_ENV_FILE
+    or ``env_file`` names one, and the path comes back None.
     """
     from .mcp_grants import LAUNCH_ONLY_KEYS
     env = dict(os.environ if env is None else env)
-    path = env_file if env_file is not None else env_file_path(env)
-    from_file = {k: v for k, v in load_dotenv(path).items() if k not in LAUNCH_ONLY_KEYS}
+    path = env_file if env_file is not None else (
+        env_file_path(env) if read_default else env.get("RELAY_ENV_FILE") or None)
+    loaded = load_dotenv(path) if path else {}
+    from_file = {k: v for k, v in loaded.items() if k not in LAUNCH_ONLY_KEYS}
     return {**from_file, **env}, path
 
 
@@ -129,15 +132,19 @@ def _origins(raw: str) -> list[str]:
     return sorted({o.strip() for o in raw.split(",") if o.strip()})
 
 
-def remote_state(env: Mapping[str, str] | None = None,
-                 env_file: str | None = None) -> dict:
+def remote_state(env: Mapping[str, str] | None = None, env_file: str | None = None,
+                 *, read_default: bool = True) -> dict:
     """What the phone-facing surface is configured to do, values withheld.
+
+    The stdio doctor passes ``read_default=False``: its working folder is
+    whatever folder a client started it in, so a ``.env`` there describes nothing
+    the operator configured unless RELAY_ENV_FILE names it.
 
     ``configured`` answers the only question that gates everything else: with no
     RELAY_REMOTE_TOKEN the entrypoint prints its notice and exits, so nothing
     remote is running whatever else is set.
     """
-    resolved, path = resolved_env(env, env_file)
+    resolved, path = resolved_env(env, env_file, read_default=read_default)
     present = {k: bool(resolved.get(k)) for k in PRESENCE_ONLY}
     missing_oauth = [k for k in OAUTH_REQUIRED if not resolved.get(k)]
     configured = present["RELAY_REMOTE_TOKEN"]
@@ -147,7 +154,7 @@ def remote_state(env: Mapping[str, str] | None = None,
         "reason": "" if configured
                   else "RELAY_REMOTE_TOKEN is unset, so the remote surface stays off",
         "env_file": path,
-        "env_file_found": pathlib.Path(path).exists(),
+        "env_file_found": bool(path) and pathlib.Path(path).is_file(),
         "oauth_configured": not missing_oauth,
         # Named, never valued: which keys the phone connector is still waiting on.
         "oauth_missing": missing_oauth,
@@ -161,7 +168,7 @@ def remote_state(env: Mapping[str, str] | None = None,
         "start_grants": grants,
         # Grant lines in the env file are ignored; named so an operator who put
         # them there learns why the surface did not take them.
-        "env_file_ignored": ignored_file_keys(path),
+        "env_file_ignored": ignored_file_keys(path) if path else [],
         "public_url": resolved.get("RELAY_PUBLIC_URL") or None,
         "allowed_origins": _origins(resolved.get("RELAY_ALLOWED_ORIGINS", "")),
         "listen": {"host": resolved.get("RELAY_REMOTE_HOST") or None,

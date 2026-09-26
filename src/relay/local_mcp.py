@@ -161,9 +161,11 @@ def _call(params: dict) -> dict:
         if name == "local_agent_runs":
             return _text(RUNS.list(limit=_as_int(args, "limit", 20)))
         if name == "local_agent_sessions":
-            from .session_store import get_session, list_sessions
-            sdir = os.environ.get("RELAY_SESSION_DIR") or "."
-            sid = args.get("session_id")
+            from .session_store import get_session, list_sessions, session_dir, valid_session_id
+            sid, sdir = _as_str(args, "session_id", ""), session_dir()
+            if sid and not valid_session_id(sid):
+                raise MCPInputError("INVALID_ARGUMENT", "session_id must be a bare name of "
+                                    "letters, digits, '.', '_' or '-' (at most 128)")
             return _text(get_session(sdir, sid) if sid else list_sessions(sdir))
         if name in ("relay.status", "relay.doctor"):
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL,
@@ -171,10 +173,10 @@ def _call(params: dict) -> dict:
             if name == "relay.doctor":
                 info["local_tiers"] = [type(b).__name__ for b in available_backends()]
                 info["tools"] = [t["name"] for t in TOOLS]
-                # The phone-facing surface is a separate process, so a client
-                # holding this stdio server had no way to ask whether it is on.
-                # Values are withheld; see remote_state.
-                info["remote"] = remote_state()
+                # The phone-facing surface is a separate process. Values are
+                # withheld, and a .env in this server's folder is read only when
+                # RELAY_ENV_FILE names it (see remote_state).
+                info["remote"] = remote_state(read_default=False)
             return _text(info)
         return {"content": [{"type": "text", "text": f"unknown tool {name!r}"}], "isError": True}
     except MCPInputError as e:
