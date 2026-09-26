@@ -8,7 +8,8 @@ configured base URL. Nothing is forged, harvested, or metered around; a missing
 credential just means that endpoint is absent from the ladder.
 
 Modes:
-  plan/max : the official CLI (claude/codex) using the operator's subscription
+  plan/max : the official CLI (claude/codex) using the operator's subscription,
+             started isolated from the server's folder and environment
   api      : the provider's public API + <PROVIDER>_API_KEY
   provider : a gateway via <PROVIDER>_PROVIDER_BASE_URL (+ _PROVIDER_KEY)
   cloud    : a cloud OpenAI-compatible endpoint via <PROVIDER>_CLOUD_BASE_URL (+ _CLOUD_KEY)
@@ -17,12 +18,13 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from ._vendor import safe_spawn
+from .child_env import cli_allowed, named_cli_grants, named_extra
 from .local_agent import BackendError
 
 
@@ -167,28 +169,49 @@ class GeminiBackend:
 @dataclass
 class CliBackend:
     """A subscription tier via the official CLI's OWN auth (claude max / codex
-    plan). It invokes the operator's authenticated client; it never proxies or
-    replays that client's tokens elsewhere."""
+    plan); it never proxies or replays that client's tokens elsewhere. The CLI
+    starts through the vendored safe_spawn: an absolute executable, a private
+    empty working folder, an environment allowlist, the prompt on stdin, and the
+    isolation profile Q0 proved for it. A CLI without a proven profile starts only
+    when the launch names it in RELAY_ALLOW_EXEC_CLI."""
     name: str
-    argv: list                       # {prompt} replaced with the flattened prompt
-    runner: "callable" = None        # inject (cmd)->(rc,out,err) for tests
+    argv: list                       # [cli name, *args]; the prompt goes on stdin
+    profile: "str | None" = None     # a safe_spawn.PROFILES name
+    override_var: "str | None" = None
+    runner: "callable" = None        # inject (argv, prompt)->(rc,out,err) for tests
     timeout: float = 300.0
 
     def health(self) -> bool:
-        return bool(self.argv) and shutil.which(self.argv[0]) is not None
+        if not self.argv or not cli_allowed(self.profile):
+            return False
+        try:
+            safe_spawn.resolve(self.argv[0], self.override_var)
+        except safe_spawn.SpawnRefused:
+            return False
+        return True
+
+    def _spawn(self, prompt: str):
+        if not self.profile:
+            raise BackendError(f"{self.name} cli refused: UNKNOWN_PROFILE: no isolation profile")
+        try:
+            p = safe_spawn.run(self.argv[0], self.argv[1:], profile=self.profile,
+                               override_var=self.override_var, input=prompt,
+                               timeout=self.timeout, allow_env=named_extra(),
+                               grants=named_cli_grants())
+        except safe_spawn.SpawnRefused as e:
+            raise BackendError(f"{self.name} cli refused: {e.code}: {e}") from e
+        except subprocess.TimeoutExpired as e:
+            raise BackendError(f"{self.name} cli timed out after {self.timeout}s") from e
+        return p.returncode, p.stdout, p.stderr
 
     def chat(self, messages, *, system, max_tokens, temperature, seed) -> dict:
         prompt = (system + "\n\n" if system else "") + "\n".join(
             f"{m['role']}: {m['content']}" for m in messages)
-        cmd = [prompt if a == "{prompt}" else a for a in self.argv]
         try:
-            if self.runner is not None:
-                rc, out, err = self.runner(cmd)
-            else:
-                p = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
-                rc, out, err = p.returncode, p.stdout, p.stderr
+            rc, out, err = (self.runner(list(self.argv), prompt) if self.runner is not None
+                            else self._spawn(prompt))
         except (OSError, subprocess.SubprocessError) as e:
-            raise BackendError(f"{self.name} cli failed: {e}") from e
+            raise BackendError(f"{self.name} cli failed: {type(e).__name__}") from e
         if rc != 0:
             raise BackendError(f"{self.name} cli exit {rc}: {(err or '').strip()[:200]}")
         # the CLI applies neither the seed nor the sampling params we pass, so the
@@ -201,10 +224,12 @@ class CliBackend:
 PROVIDERS = {
     "codex":    {"kind": "openai", "base": "https://api.openai.com/v1",
                  "key": "OPENAI_API_KEY", "model": "gpt-4o",
-                 "cli": ["codex", "exec", "{prompt}"]},
+                 "cli": {"argv": ["codex", "-"], "profile": "codex",
+                         "override": "RELAY_CODEX_CLI"}},
     "claude":   {"kind": "anthropic", "base": "https://api.anthropic.com",
                  "key": "ANTHROPIC_API_KEY", "model": "claude-sonnet-4-5",
-                 "cli": ["claude", "-p", "{prompt}", "--output-format", "text"]},
+                 "cli": {"argv": ["claude", "-p", "--output-format", "text"],
+                         "profile": "claude", "override": "RELAY_CLAUDE_CLI"}},
     "glm":      {"kind": "openai", "base": "https://open.bigmodel.cn/api/paas/v4",
                  "key": "GLM_API_KEY", "model": "glm-4.6"},
     "gemini":   {"kind": "gemini", "base": "https://generativelanguage.googleapis.com/v1beta",
@@ -243,7 +268,10 @@ def _one(pname: str, spec: dict, mode: str):
     up = pname.upper()
     if mode in ("plan", "max"):
         cli = spec.get("cli")
-        return CliBackend(name=f"{pname}-{mode}", argv=cli) if cli else None
+        if not cli:
+            return None
+        return CliBackend(name=f"{pname}-{mode}", argv=list(cli["argv"]),
+                          profile=cli.get("profile"), override_var=cli.get("override"))
     if mode == "api":
         return _api_backend(pname, spec, spec["base"], spec["key"])
     if mode == "provider":

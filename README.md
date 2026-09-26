@@ -37,7 +37,7 @@ tiers first so you only spend metered tokens when you have to:
 | Tier | Reached by |
 |---|---|
 | **local** | a served 14B/32B (`serve.py`) → Ollama (largest pulled model) |
-| **plan / max** | the official CLI (`claude`, `codex`) using your subscription auth |
+| **plan / max** | the official CLI (`claude`, `codex`) using your subscription auth, started isolated from your project |
 | **api** | `codex` / `claude` / `glm` / `gemini` / `deepseek` public APIs + `<PROVIDER>_API_KEY` |
 | **provider** | a gateway (OpenRouter, ...) via `<PROVIDER>_PROVIDER_BASE_URL` |
 | **cloud** | a cloud OpenAI-compatible endpoint via `<PROVIDER>_CLOUD_BASE_URL` + `_CLOUD_KEY` |
@@ -305,7 +305,42 @@ root they started with through `local_agent_status` and `local_agent_result`.
 The file tools also leave the server's own files alone: they never read the env
 file the remote entrypoint uses (`RELAY_ENV_FILE`, default `.env`), and never
 write it, the run store (`RELAY_RUN_ROOT`), the session store
-(`RELAY_SESSION_DIR`) or anything under a `.git` directory.
+(`RELAY_SESSION_DIR`) or anything under a `.git` directory. They also refuse
+writes into agent and editor configuration (`.claude`, `.codex`, `.cursor`,
+`.vscode`, `.gemini`, `.agents`, `.opencode`, `.mcp.json`), whose hooks, tasks
+and MCP servers run the next time a tool opens the tree.
+
+Saved sessions live in `RELAY_SESSION_DIR`, or in a per-user folder when it is
+unset (`%LOCALAPPDATA%\relay\sessions` on Windows, `~/Library/Application
+Support/relay/sessions` on macOS, `$XDG_DATA_HOME/relay/sessions` or
+`~/.local/share/relay/sessions` elsewhere), never the folder the server starts
+in. `local_agent_sessions` takes a `session_id` only as a bare name of letters,
+digits, `.`, `_` and `-`, and refuses anything else with `INVALID_ARGUMENT`. A
+file that will not parse is skipped and counted in `skipped`. The stdio
+`relay.doctor` reads an env file only when `RELAY_ENV_FILE` names one.
+
+What relay's children see. Every program relay starts gets an environment
+allowlist, not the server's whole environment: the platform base (`PATH` with
+absolute entries only, the system and profile folders), and for shells a fixed
+set of toolchain variables such as `VIRTUAL_ENV`, `JAVA_HOME` and `CARGO_HOME`.
+No provider key reaches `run`, `test_cmd`, `check` or a CLI tier. To pass more,
+list the names in `RELAY_CHILD_ENV` (comma separated) in the environment that
+starts relay. On Windows a shell no longer finds a program in the root by bare
+name; call it as `.\tool`.
+
+The `claude` and `codex` CLI tiers start isolated: the executable resolves to an
+absolute path (`RELAY_CLAUDE_CLI` and `RELAY_CODEX_CLI` override it and must be
+absolute), the child runs in a new empty folder, the prompt goes on stdin, and
+each CLI gets the flags that keep project settings, hooks, MCP servers,
+instruction files and skills out. For `claude` that is `--setting-sources user
+--strict-mcp-config --tools ""`. For `codex` it is `exec` with
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, a read-only sandbox,
+hooks, plugins, memories and apps disabled, and project docs and skills off.
+Those flags were probed on claude 2.1.251 and codex 0.144.6, and
+`relay.doctor` reports each tier's row as `PASS` only on the tested version.
+They still need exec. A CLI tier whose isolation profile is not proven starts
+only when the launch also names it in `RELAY_ALLOW_EXEC_CLI`, and its doctor
+row stays `WARN`.
 
 The limits to plan around: the shell is not path-confined. With exec granted,
 `run`, `test_cmd` and `check` start in `root` and can read and write any path

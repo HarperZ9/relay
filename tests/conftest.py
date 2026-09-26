@@ -14,3 +14,10 @@ def _mcp_launch_root(monkeypatch, tmp_path_factory):
     from relay.mcp_grants import StartGrants
 
     monkeypatch.setattr(m, "_GRANTS", StartGrants(root=str(tmp_path_factory.getbasetemp())))
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    """A server folder with a planted project hook, and CLI stand-ins' bin folder."""
+    from cli_stand_in import make_world
+    return make_world(tmp_path, monkeypatch)

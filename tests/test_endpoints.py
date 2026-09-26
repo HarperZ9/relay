@@ -124,15 +124,15 @@ def test_health_gates_on_credential(monkeypatch):
 
 
 def test_cli_backend_runs_client_and_surfaces_failure():
-    ok = CliBackend("claude-max", ["claude", "-p", "{prompt}"],
-                    runner=lambda cmd: (0, "answer from cli\n", ""))
+    ok = CliBackend("claude-max", ["claude", "-p"],
+                    runner=lambda cmd, prompt: (0, "answer from cli\n", ""))
     assert ok.chat(_MSG, system="s", max_tokens=10, temperature=0, seed=0)["text"] == "answer from cli"
-    # the prompt placeholder is substituted, not passed literally
+    # the prompt goes on stdin, never on argv, where a batch shim would reparse it
     seen = {}
-    CliBackend("x", ["c", "{prompt}"], runner=lambda cmd: seen.update(cmd=cmd) or (0, "", "")
-               ).chat(_MSG, system="", max_tokens=1, temperature=0, seed=0)
-    assert "{prompt}" not in seen["cmd"] and any("user: hi" in a for a in seen["cmd"])
-    bad = CliBackend("y", ["c", "{prompt}"], runner=lambda cmd: (1, "", "boom"))
+    CliBackend("x", ["c", "-p"], runner=lambda cmd, prompt: seen.update(cmd=cmd, prompt=prompt)
+               or (0, "", "")).chat(_MSG, system="", max_tokens=1, temperature=0, seed=0)
+    assert seen["cmd"] == ["c", "-p"] and "user: hi" in seen["prompt"]
+    bad = CliBackend("y", ["c"], runner=lambda cmd, prompt: (1, "", "boom"))
     with pytest.raises(BackendError, match="cli exit 1"):
         bad.chat(_MSG, system="", max_tokens=1, temperature=0, seed=0)
 

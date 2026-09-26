@@ -171,12 +171,14 @@ def _call(params: dict) -> dict:
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL,
                     "grants": {**_GRANTS.as_dict(), "root": launch_root(_GRANTS)}}
             if name == "relay.doctor":
+                from .cli_tiers import cli_tier_rows
                 info["local_tiers"] = [type(b).__name__ for b in available_backends()]
                 info["tools"] = [t["name"] for t in TOOLS]
                 # The phone-facing surface is a separate process. Values are
                 # withheld, and a .env in this server's folder is read only when
                 # RELAY_ENV_FILE names it (see remote_state).
                 info["remote"] = remote_state(read_default=False)
+                info["cli_tiers"] = cli_tier_rows(_call_exec_ok())
             return _text(info)
         return {"content": [{"type": "text", "text": f"unknown tool {name!r}"}], "isError": True}
     except MCPInputError as e:

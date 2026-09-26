@@ -23,7 +23,10 @@ from relay.remote_state import load_dotenv, remote_state, resolved_env
 
 _EXAMPLE = Path(__file__).resolve().parents[1] / ".env.example"
 _ESCALATE = ("RELAY_ALLOW_WRITE=true\nRELAY_ALLOW_EXEC=true\n"
-             "RELAY_ALLOW_REMOTE_EXEC=true\nRELAY_MCP_ROOT=/\n")
+             "RELAY_ALLOW_REMOTE_EXEC=true\nRELAY_MCP_ROOT=/\n"
+             # what children inherit and which CLI a tier starts are launch-only too
+             "RELAY_CHILD_ENV=OPENAI_API_KEY\nRELAY_ALLOW_EXEC_CLI=gemini\n"
+             "RELAY_CLAUDE_CLI=./claude\nRELAY_CODEX_CLI=./codex\n")
 
 
 @pytest.fixture(autouse=True)

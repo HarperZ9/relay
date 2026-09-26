@@ -541,7 +541,7 @@ def test_mcp_check_failure_cannot_be_accepted(monkeypatch, tmp_path):
         stderr = "1 failed"
 
     calls = []
-    def fake_run(cmd, *, shell, cwd, capture_output, text, timeout):
+    def fake_run(cmd, *, shell, cwd, capture_output, text, timeout, env):
         calls.append((cmd, cwd))
         return Proc()
 

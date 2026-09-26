@@ -67,14 +67,14 @@ def launched(monkeypatch):
     class _Done:
         returncode, stdout, stderr = 0, "cli answer", ""
 
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
+    def fake_run(name, args, **kwargs):
+        calls.append((name, list(args), kwargs.get("profile")))
         return _Done()
 
-    tier = CliBackend(name="codex-plan", argv=["codex", "exec", "{prompt}"])
+    tier = CliBackend(name="codex-plan", argv=["codex", "-"], profile="codex")
     monkeypatch.setattr(ep, "build_endpoints", lambda **kwargs: [tier])
-    monkeypatch.setattr(ep.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(ep.subprocess, "run", fake_run)
+    monkeypatch.setattr(ep.safe_spawn, "resolve", lambda name, *a, **k: f"/usr/bin/{name}")
+    monkeypatch.setattr(ep.safe_spawn, "run", fake_run)
     monkeypatch.setattr(m, "available_backends", lambda *, model="": [])
     return calls
 
@@ -132,7 +132,7 @@ def test_the_exec_grant_opens_the_cli_tier(monkeypatch, launched):
     out = _body(_call("local_agent_chat", {"prompt": "hi", "online": True,
                                            "backend": "codex-plan"}))
     assert out["text"] == "cli answer"
-    assert len(launched) == 1 and launched[0][:2] == ["codex", "exec"]
+    assert launched == [("codex", ["-"], "codex")]
 
 
 def test_remote_chat_needs_remote_exec_for_a_cli_tier(monkeypatch, launched):
