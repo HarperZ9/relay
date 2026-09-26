@@ -102,3 +102,9 @@ jobs:
           # PEP 740 attestations: the index records who built these bytes and
           # from which workflow, verifiable without trusting us.
           attestations: true
+          # A tag push and the GitHub Release made for the same tag both run
+          # this workflow. The first run uploads; the second finds the files
+          # already on PyPI and skips them instead of failing. PyPI never
+          # accepts a changed file under an existing name, so this cannot
+          # replace a published artifact.
+          skip-existing: true
