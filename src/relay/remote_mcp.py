@@ -12,8 +12,9 @@ Safety posture, hardened versus the same-machine stdio server:
 - every request must present the configured bearer token (constant-time check);
 - when an allowlist is configured, the Origin header must be on it (the spec's
   DNS-rebinding guard);
-- write and exec are granted at launch (RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC,
-  read by remote_cli), and a call can only narrow them;
+- write, exec and the launch root are granted at launch (RELAY_ALLOW_WRITE /
+  RELAY_ALLOW_EXEC / RELAY_MCP_ROOT, read by remote_cli from the process
+  environment only), and a call can only narrow them;
 - exec is refused on top of that unless the operator also opts in at the PC
   (RELAY_ALLOW_REMOTE_EXEC), because relay's run/exec is not root-confined.
 The OAuth authorization layer is a later increment (a bearer token gates v1).
@@ -31,6 +32,7 @@ from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .local_mcp import PROTOCOL, handle as _default_handle
+from .mcp_grants import REMOTE_EXEC_ENV, SURFACE_EXEC_REFUSED, parse_flag
 from .remote_oauth import (
     OAuthSettings,
     access_token_ok,
@@ -101,7 +103,8 @@ def config_from_env(env: Mapping[str, str] | None = None) -> RemoteMcpConfig | N
     if not token:
         return None
     origins = {o.strip() for o in env.get("RELAY_ALLOWED_ORIGINS", "").split(",") if o.strip()}
-    exec_ok = env.get("RELAY_ALLOW_REMOTE_EXEC", "").lower() in ("1", "true", "yes")
+    # Parsed like the launch grants: an unrecognized value raises, never off.
+    exec_ok = parse_flag(env, REMOTE_EXEC_ENV)
     return RemoteMcpConfig(
         token=token, allowed_origins=origins, allow_remote_exec=exec_ok,
         oauth=_oauth_from_env(env),
@@ -129,22 +132,18 @@ def _authorized(cfg: "RemoteMcpConfig", authorization: str | None) -> bool:
     return False
 
 
-def _apply_remote_posture(cfg: RemoteMcpConfig, req: dict) -> None:
-    """Refuse remote exec unless the operator opted in at the PC. relay's run/exec
-    is not root-confined, so an allowed shell reaches outside root; on the remote
-    surface allow_exec is forced off (the run still proceeds, without exec). An
-    omitted allow_exec inherits the launch grant, so it is set off explicitly."""
-    if cfg.allow_remote_exec:
-        return
-    params = req.get("params") or {}
-    if not isinstance(params, dict):
-        return
-    if req.get("method") == "tools/call" and params.get("name") in ("local_agent_run", "local_agent_start"):
-        args = params.get("arguments") or {}
-        if isinstance(args, dict):
-            args["allow_exec"] = False
-            params["arguments"] = args
-            req["params"] = params
+def _handle(cfg: RemoteMcpConfig, req: dict):
+    """Run the handler with the remote exec posture. relay's shell is not
+    root-confined, so without RELAY_ALLOW_REMOTE_EXEC every tool call on this
+    surface runs with exec refused: no run tool, no check, no test_cmd and no
+    agentic CLI tier. The run still proceeds without exec. The refusal travels in
+    a context variable, so the caller's arguments are left as sent and no field
+    in the request can set or clear it."""
+    token = SURFACE_EXEC_REFUSED.set(not cfg.allow_remote_exec)
+    try:
+        return cfg.handle(req)
+    finally:
+        SURFACE_EXEC_REFUSED.reset(token)
 
 
 def process(
@@ -178,8 +177,7 @@ def process(
         return _json(400, {"error": "body is not valid JSON-RPC"})
     if not isinstance(req, dict):
         return _json(400, {"error": "JSON-RPC message must be an object"})
-    _apply_remote_posture(cfg, req)
-    resp = cfg.handle(req)
+    resp = _handle(cfg, req)
     if resp is None:
         # a notification or response the server accepts carries no reply body
         return 202, {}, b""

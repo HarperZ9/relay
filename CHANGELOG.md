@@ -2,11 +2,24 @@
 
 ## 0.3.0, 2026-09-26
 
-Write and exec grants for the MCP servers move from tool arguments to launch
-configuration. This changes what an existing MCP call does, so it is a minor
-release rather than a patch: a client that sent `allow_write: true` or
-`allow_exec: true` to a server started without the grant now runs with it off.
-Relay is pre-1.0, where a breaking change takes the minor number.
+Write, exec and the working root for the MCP servers move from tool arguments to
+launch configuration. This changes what existing MCP calls and setups do, so it
+is a minor release rather than a patch. Relay is pre-1.0, where a breaking change
+takes the minor number. The breaks:
+
+- A client that sends `allow_write: true` or `allow_exec: true` to a server
+  started without that grant now runs with it off.
+- A run's `root` must resolve inside the server's launch root. A call that names
+  any other directory is refused with `ROOT_NOT_GRANTED`.
+- `check` and the online `codex` and `claude` CLI tiers need exec.
+- The remote entrypoint no longer reads `RELAY_ALLOW_WRITE`, `RELAY_ALLOW_EXEC`,
+  `RELAY_ALLOW_REMOTE_EXEC` or `RELAY_MCP_ROOT` from its `.env` file. In 0.2.5 a
+  `RELAY_ALLOW_REMOTE_EXEC` line there was honored; set it in the environment
+  that starts the server instead.
+- `RELAY_ALLOW_REMOTE_EXEC` accepts `on` and `off`, and an unrecognized value
+  now stops the remote server instead of reading as off.
+
+An omitted `allow_write` or `allow_exec` still means off, as in 0.2.5.
 
 Source version metadata is not release availability proof; release availability
 is established only by the accepted Git tag, uploaded GitHub Release assets, and
@@ -16,35 +29,61 @@ the HarperZ9 Relay distribution.
 
 ### Changed
 
-- `relay --mcp` takes write and exec from its launch: `--allow-write` and
-  `--allow-exec`, or `RELAY_ALLOW_WRITE` and `RELAY_ALLOW_EXEC`. Both are off by
-  default. `python -m relay.local_mcp` reads the variables, and the remote
-  entrypoint reads them from its environment and `.env` file. An unrecognized
-  value stops the server at launch.
-- The `allow_write` and `allow_exec` arguments on `local_agent_run` and
-  `local_agent_start` only narrow the launch grants for one run. An omitted
-  argument keeps the launch grant, and `allow_write: false` also turns exec off.
+- `relay --mcp` and `python -m relay.local_mcp` take write and exec from their
+  launch: `--allow-write` and `--allow-exec`, or `RELAY_ALLOW_WRITE` and
+  `RELAY_ALLOW_EXEC`. Both are off by default. The launch root comes from
+  `--root` or `RELAY_MCP_ROOT` and defaults to the working directory. An
+  unrecognized value or a root that is not a directory stops the server at
+  launch, including a direct call to `serve()`, which now returns 2 with a
+  message instead of raising.
+- A run gets what it asks for and the launch granted, both. `allow_write: true`
+  and `allow_exec: true` ask; an omitted argument asks for nothing. Asking for
+  exec also asks for write, and `allow_write: false` turns exec off.
+- A run's `root` resolves under the launch root, and links are followed before
+  the check, so neither `..` nor a link steps outside it.
+- An MCP run's file tools never read the server's env file (`RELAY_ENV_FILE`,
+  default `.env`), and never write it, the run store (`RELAY_RUN_ROOT`), the
+  session store (`RELAY_SESSION_DIR`) or anything under a `.git` directory. On
+  Windows they refuse a name ending in a dot or a space, or naming a stream,
+  since it opens another spelling of a file.
 - `check` runs a shell outside the tool gate, so an MCP run that sets it needs
-  the exec grant and is refused with `EXEC_NOT_GRANTED` otherwise. Before this
-  release a caller could reach a shell through `check` with exec off.
+  exec and is refused with `EXEC_NOT_GRANTED` otherwise. Before this release a
+  caller could reach a shell through `check` with exec off.
+- The online `codex` and `claude` CLI tiers start an agent with its own shell.
+  Without exec, `local_agent_chat`, `local_agent_health` and auto routing leave
+  them out, and naming one is refused with `EXEC_NOT_GRANTED`.
 - On the remote surface, exec needs both `RELAY_ALLOW_EXEC` and
-  `RELAY_ALLOW_REMOTE_EXEC`, and writes need `RELAY_ALLOW_WRITE`. The remote exec
-  guard now sets `allow_exec` off on every run and start call, because an omitted
-  argument would otherwise inherit the launch grant.
+  `RELAY_ALLOW_REMOTE_EXEC`, and write needs `RELAY_ALLOW_WRITE` on its own:
+  `RELAY_ALLOW_EXEC` alone grants the phone nothing. The server configures only
+  what the surface allows, so its banner and `relay.status` report what runs
+  get, and it still refuses exec per request as a second layer.
+- The remote entrypoint reads the grant variables from its process environment
+  only, because a run allowed to write could otherwise edit `.env` and give
+  itself exec on the next restart. It names any such line it finds at startup,
+  and the remote readout lists them as `env_file_ignored`.
+- `.env` values may carry an inline comment after whitespace (`KEY=value  # note`).
+  Before this release the comment became part of the value, so the shipped
+  `.env.example` failed to start as documented.
 - The request binding is `relay.mcp-run-request/v2`. It adds
-  `granted_allow_write` and `granted_allow_exec`, and reports
-  `requested_allow_write` and `requested_allow_exec` as `null` when omitted.
-- `relay.status` and `relay.doctor` report the launch grants, and the remote
-  readout reports them as `start_grants`.
+  `granted_allow_write`, `granted_allow_exec`, `granted_root`,
+  `requested_root`, `grant_shortfall`, `remote_exec_refused` and `protected`,
+  and reports `requested_allow_write` and `requested_allow_exec` as `null`
+  when omitted.
+- `relay.status` and `relay.doctor` report the launch grants and root. The
+  remote readout reports the grants the surface would configure as
+  `start_grants`, and adds `remote_exec_in_effect` next to
+  `remote_exec_allowed`.
 
 ### Limits
 
-- The file tools are confined to the run's root. The shell is not
-  path-confined: with exec granted, `run`, `test_cmd` and `check` start in root
-  and can reach any path the server's user can. The tool descriptions and the
-  README say so.
-- Background runs keep the gate they started with. Changing the grants needs a
-  server restart.
+- The shell is not path-confined: with exec granted, `run`, `test_cmd` and
+  `check` start in root and can reach any path the server's user can.
+- Write is a route to code execution. A file written under the root runs the
+  next time something executes it there, such as a build script, a test, or a
+  shell profile when the root is a home directory. Launch the server over a
+  workspace its callers may edit.
+- Background runs keep the gate and root they started with. Changing the grants
+  needs a server restart.
 
 ## 0.2.5, 2026-09-22
 

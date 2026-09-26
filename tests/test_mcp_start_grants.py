@@ -6,17 +6,20 @@ runs with it off even when an argument asks for it; (2) a server started with a
 grant honors it, including for background start/status/result; (3) arguments
 narrow a grant and never widen it; (4) ``check`` runs a shell, so it needs the
 exec grant; (5) the tool description and README state that an allowed shell is
-not path-confined; (6) the launchers read the grants from flags and environment.
+not path-confined. The launchers are covered in test_mcp_grant_launchers.py and
+the other routes to a shell in test_mcp_exec_routes.py.
 """
 import json
+import os
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import relay.local_mcp as m
 from relay.async_runs import DONE, RunRegistry
-from relay.mcp_grants import StartGrants, grants_from_env, grants_from_launch
+from relay.mcp_grants import StartGrants, grants_from_env
 from relay.remote_mcp import RemoteMcpConfig, process
 
 
@@ -61,7 +64,8 @@ def seen(monkeypatch):
 
 
 def _start(monkeypatch, grants):
-    monkeypatch.setattr(m, "_GRANTS", grants)
+    # Keep the launch root conftest pinned; these tests are about write and exec.
+    monkeypatch.setattr(m, "_GRANTS", replace(grants, root=m._GRANTS.root))
 
 
 # --- (1) no grant at start: arguments cannot turn write or exec on ---
@@ -87,25 +91,6 @@ def test_write_argument_alone_cannot_grant_write(monkeypatch, seen):
     assert seen["allow_write"] is False
 
 
-def test_real_write_is_denied_without_a_start_grant(monkeypatch, tmp_path):
-    from relay.local_loop import run_agent as real_run_agent
-
-    class Writer(_Stub):
-        def __init__(self):
-            self.replies = ['TOOL write_file {"path": "x.txt", "content": "hi"}', "done"]
-
-        def chat(self, messages, *, system, max_tokens, temperature, seed):
-            return {"text": self.replies.pop(0) if self.replies else "done",
-                    "model_ref": "stub:w", "seed": seed}
-
-    monkeypatch.setattr(m, "run_agent", real_run_agent)
-    monkeypatch.setattr(m, "available_backends", lambda *, model="": [Writer()])
-    _start(monkeypatch, StartGrants())
-    _body("local_agent_run", {"goal": "write x", "root": str(tmp_path), "backend": "stub",
-                              "max_steps": 3, "allow_write": True})
-    assert not (tmp_path / "x.txt").exists()
-
-
 def test_check_needs_the_exec_grant(monkeypatch, seen):
     # check runs `subprocess.run(check, shell=True)`. Over MCP the caller is not
     # the operator, so an argument must not be a way to reach a shell.
@@ -116,25 +101,40 @@ def test_check_needs_the_exec_grant(monkeypatch, seen):
     assert body["error"]["code"] == "EXEC_NOT_GRANTED"
     assert "check" not in seen   # the agent never ran
 
+    # With the grant, check still needs the run to ask for exec.
     _start(monkeypatch, StartGrants(allow_exec=True))
-    _body("local_agent_run", {"goal": "g", "check": "echo hi"})
+    res = _call("local_agent_run", {"goal": "g", "check": "echo hi"})
+    assert json.loads(res["content"][0]["text"])["error"]["code"] == "EXEC_NOT_GRANTED"
+    assert "check" not in seen
+    _body("local_agent_run", {"goal": "g", "check": "echo hi", "allow_exec": True})
     assert seen["check"] == "echo hi"
 
 
 # --- (2) a grant at start is honored, blocking and background ---
 
-def test_start_grants_are_honored_when_arguments_are_omitted(monkeypatch, seen):
+def test_an_omitted_argument_asks_for_nothing(monkeypatch, seen):
+    # As in 0.2.5, a run that does not ask for write or exec gets neither, even
+    # on a server launched with both. A grant is the most a run may ask for.
     _start(monkeypatch, StartGrants(allow_write=True, allow_exec=True))
     body = _body("local_agent_run", {"goal": "g"})
-    assert seen == {"allow_write": True, "allow_exec": True, "check": None}
+    assert seen == {"allow_write": False, "allow_exec": False, "check": None}
     assert body["request_binding"]["requested_allow_write"] is None
     assert body["request_binding"]["granted_allow_exec"] is True
+
+
+def test_a_run_gets_what_it_asks_for_up_to_the_grant(monkeypatch, seen):
+    _start(monkeypatch, StartGrants(allow_write=True, allow_exec=True))
+    _body("local_agent_run", {"goal": "g", "allow_write": True})
+    assert seen["allow_write"] is True and seen["allow_exec"] is False
+    _body("local_agent_run", {"goal": "g", "allow_write": True, "allow_exec": True})
+    assert seen["allow_write"] is True and seen["allow_exec"] is True
 
 
 def test_exec_grant_implies_write(monkeypatch, seen):
     _start(monkeypatch, StartGrants(allow_exec=True))
     assert m._GRANTS.allow_write is True
-    _body("local_agent_run", {"goal": "g"})
+    # Asking for exec alone asks for write too, because a shell can write.
+    _body("local_agent_run", {"goal": "g", "allow_exec": True})
     assert seen["allow_write"] is True and seen["allow_exec"] is True
 
 
@@ -164,14 +164,14 @@ def test_background_start_status_result_use_the_start_grants(monkeypatch, tmp_pa
 
 def test_arguments_narrow_the_start_grants(monkeypatch, seen):
     _start(monkeypatch, StartGrants(allow_write=True, allow_exec=True))
-    _body("local_agent_run", {"goal": "g", "allow_exec": False})
+    _body("local_agent_run", {"goal": "g", "allow_write": True, "allow_exec": False})
     assert seen["allow_write"] is True and seen["allow_exec"] is False
 
 
 def test_narrowing_write_also_turns_exec_off(monkeypatch, seen):
     # A shell can write, so a run told "no writes" cannot keep a shell.
     _start(monkeypatch, StartGrants(allow_write=True, allow_exec=True))
-    body = _body("local_agent_run", {"goal": "g", "allow_write": False})
+    body = _body("local_agent_run", {"goal": "g", "allow_write": False, "allow_exec": True})
     assert seen["allow_write"] is False and seen["allow_exec"] is False
     assert body["request_binding"]["allow_exec"] is False
 
@@ -185,21 +185,28 @@ def test_grant_arguments_are_still_type_checked(monkeypatch, seen):
 
 # --- (4) the remote surface keeps its own exec guard under inherited grants ---
 
-def test_remote_posture_scrubs_an_inherited_exec_grant():
+def test_remote_posture_refuses_exec_without_touching_the_arguments():
+    from relay.mcp_grants import SURFACE_EXEC_REFUSED
+
     captured = {}
 
     def h(req):
         captured["args"] = json.loads(json.dumps(req["params"]["arguments"]))
+        captured["refused"] = SURFACE_EXEC_REFUSED.get()
         return {"jsonrpc": "2.0", "id": req.get("id"), "result": {"ok": True}}
 
-    cfg = RemoteMcpConfig(token="t", handle=h)
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": {"name": "local_agent_start", "arguments": {"goal": "g"}}})
-    process(cfg, "POST", {"authorization": "Bearer t", "content-type": "application/json",
-                          "accept": "application/json, text/event-stream"}, body.encode())
-    # Omitting allow_exec now inherits the start grant, so the remote guard must
-    # set it off explicitly rather than only flipping a true value.
-    assert captured["args"]["allow_exec"] is False
+    headers = {"authorization": "Bearer t", "content-type": "application/json"}
+    process(RemoteMcpConfig(token="t", handle=h), "POST", headers, body.encode())
+    # The refusal covers an omitted allow_exec, which would otherwise inherit
+    # the launch grant, and it leaves the caller's arguments as sent.
+    assert captured == {"args": {"goal": "g"}, "refused": True}
+    assert SURFACE_EXEC_REFUSED.get() is False   # scoped to that one request
+
+    process(RemoteMcpConfig(token="t", handle=h, allow_remote_exec=True), "POST", headers,
+            body.encode())
+    assert captured["refused"] is False
 
 
 # --- (5) the limit is stated where a client and a reader will see it ---
@@ -230,94 +237,5 @@ def test_status_and_doctor_report_the_start_grants(monkeypatch):
     for tool in ("relay.status", "relay.doctor"):
         grants = _body(tool, {})["grants"]
         assert grants == {"allow_write": True, "allow_exec": False,
-                          "shell_path_confined": False}
-
-
-# --- (6) launchers read flags and environment ---
-
-@pytest.mark.parametrize("raw,expected", [
-    ("1", True), ("true", True), ("YES", True), ("on", True),
-    ("", False), ("0", False), ("false", False), ("no", False), ("off", False),
-])
-def test_env_values_parse(raw, expected):
-    assert grants_from_env({"RELAY_ALLOW_WRITE": raw}).allow_write is expected
-
-
-def test_an_unrecognized_env_value_fails_closed_loudly():
-    with pytest.raises(ValueError, match="RELAY_ALLOW_EXEC"):
-        grants_from_env({"RELAY_ALLOW_EXEC": "maybe"})
-
-
-def test_flags_or_environment_grant():
-    assert grants_from_launch(allow_write=True, allow_exec=False, env={}) == \
-        StartGrants(allow_write=True)
-    assert grants_from_launch(allow_write=False, allow_exec=False,
-                              env={"RELAY_ALLOW_EXEC": "1"}).allow_exec is True
-    assert grants_from_launch(allow_write=False, allow_exec=False, env={}) == StartGrants()
-
-
-def test_serve_takes_grants_from_its_launch(monkeypatch):
-    import io
-
-    monkeypatch.setattr(m, "_GRANTS", StartGrants())
-    monkeypatch.setenv("RELAY_ALLOW_WRITE", "1")
-    monkeypatch.delenv("RELAY_ALLOW_EXEC", raising=False)
-    out = io.StringIO()
-    m.serve(stdin=io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                                          "params": {"name": "relay.status"}}) + "\n"),
-            stdout=out)
-    status = json.loads(json.loads(out.getvalue())["result"]["content"][0]["text"])
-    assert status["grants"]["allow_write"] is True and status["grants"]["allow_exec"] is False
-
-    m.serve(stdin=io.StringIO(""), stdout=io.StringIO(),
-            grants=StartGrants(allow_exec=True))
-    assert m._GRANTS == StartGrants(allow_write=True, allow_exec=True)
-
-
-def test_cli_mcp_passes_flag_grants_to_serve(monkeypatch):
-    import sys
-    import types
-
-    from relay import local_agent_cli
-
-    got = {}
-    monkeypatch.delenv("RELAY_ALLOW_WRITE", raising=False)
-    monkeypatch.delenv("RELAY_ALLOW_EXEC", raising=False)
-    def fake_serve(grants=None):
-        got["grants"] = grants
-        return 0
-
-    monkeypatch.setitem(sys.modules, "relay.local_mcp", types.SimpleNamespace(serve=fake_serve))
-    assert local_agent_cli.main(["--mcp", "--allow-write"]) == 0
-    assert got["grants"] == StartGrants(allow_write=True)
-
-
-def test_cli_mcp_refuses_a_bad_env_value(monkeypatch, capsys):
-    from relay import local_agent_cli
-
-    monkeypatch.setenv("RELAY_ALLOW_WRITE", "sure")
-    assert local_agent_cli.main(["--mcp"]) == 2
-    assert "RELAY_ALLOW_WRITE" in capsys.readouterr().err
-
-
-def test_remote_entrypoint_configures_the_launch_grants(monkeypatch):
-    from relay import remote_cli
-
-    class _Server:
-        def serve_forever(self):
-            raise KeyboardInterrupt
-
-        def shutdown(self):
-            pass
-
-    monkeypatch.setattr(m, "_GRANTS", StartGrants())
-    monkeypatch.setattr(remote_cli, "serve", lambda *a, **k: _Server())
-    env = {"RELAY_REMOTE_TOKEN": "t", "RELAY_ALLOW_WRITE": "true"}
-    monkeypatch.setattr(remote_cli, "resolved_env", lambda: (env, "none.env"))
-    assert remote_cli.main() == 0
-    assert m._GRANTS == StartGrants(allow_write=True)
-
-    env["RELAY_ALLOW_EXEC"] = "perhaps"
-    monkeypatch.setattr(m, "_GRANTS", StartGrants())
-    assert remote_cli.main() == 2
-    assert m._GRANTS == StartGrants()
+                          "root": os.path.realpath(m._GRANTS.root),
+                          "agent_cli_tiers": False, "shell_path_confined": False}

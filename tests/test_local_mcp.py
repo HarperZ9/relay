@@ -283,7 +283,7 @@ def _launch_grants(monkeypatch, **grants):
     # Write and exec are granted by whoever starts the server, not by arguments.
     import relay.local_mcp as m
     from relay.mcp_grants import StartGrants
-    monkeypatch.setattr(m, "_GRANTS", StartGrants(**grants))
+    monkeypatch.setattr(m, "_GRANTS", StartGrants(root=m._GRANTS.root, **grants))
 
 
 def _decode_tool(resp):
@@ -407,7 +407,7 @@ def test_background_start_passes_cli_parity_options_and_persists_request_binding
         "goal": "background fix", "root": str(tmp_path), "backend": "stub",
         "model": "stub-model", "max_tokens": 321, "max_steps": 5,
         "check": "pytest -q", "test_cmd": "pytest tests/test_bug.py",
-        "compact_budget": 1024,
+        "compact_budget": 1024, "allow_exec": True,
     }}))
     body = _decode_tool(start)
     binding = body["request_binding"]
@@ -550,7 +550,7 @@ def test_mcp_check_failure_cannot_be_accepted(monkeypatch, tmp_path):
     _launch_grants(monkeypatch, allow_exec=True)
     resp = handle(_req("tools/call", params={"name": "local_agent_run", "arguments": {
         "goal": "answer", "root": str(tmp_path), "backend": "stub", "max_steps": 2,
-        "check": "pytest -q",
+        "check": "pytest -q", "allow_exec": True,
     }}))
     body = _decode_tool(resp)
     assert calls == [("pytest -q", str(tmp_path))]
@@ -608,7 +608,7 @@ def test_observed_route_reports_the_last_witnessed_assistant_route():
         "receipt": {"receipt_id": "final", "model_ref": "model-final"},
     })
 
-    projected = m._run_projection(
+    projected = m.run_projection(
         {"final": "done", "steps": 2, "verified": True, "final_answer": True,
          "chain_ok": True, "checkpoint": "abc123", "accepted": True,
          "check_passed": True, "ledger": ledger})

@@ -121,12 +121,30 @@ IPv4 (no CGNAT) and your own cert.
 
 Open the Claude app → in a chat tap **+ → Connectors → toggle `relay` on**. Ask
 Claude to use the relay tools (`local_agent_run`, `local_agent_chat`,
-`relay.status`, …). Writes are **off** unless you set `RELAY_ALLOW_WRITE=true` on
-the PC; a call can then turn writes off for one run but cannot turn them on
-itself. Remote exec is **off** unless you set both `RELAY_ALLOW_EXEC=true` and
-`RELAY_ALLOW_REMOTE_EXEC=true` on the PC. relay's shell is not path-confined: it
-starts in the run's root and can reach any path your account can, so enable it
-only deliberately.
+`relay.status`, …). Writes are **off** unless you start the server with
+`RELAY_ALLOW_WRITE=1` in its environment; a run then gets writes only when it
+asks with `allow_write: true`, and a call can never turn on what the launch did
+not. Remote exec is **off** unless the environment also has both
+`RELAY_ALLOW_EXEC=1` and `RELAY_ALLOW_REMOTE_EXEC=1`; `RELAY_ALLOW_EXEC` alone
+grants the phone nothing. Runs stay inside `RELAY_MCP_ROOT`, which defaults to
+the directory the server starts in (the repo root, for the launch scripts).
+
+These grant lines are **not** read from `.env`: a run allowed to write could
+otherwise edit `.env` and give itself exec on the next restart, which the launch
+scripts perform automatically. Set them in the shell that runs the script, for
+example:
+
+```powershell
+$env:RELAY_ALLOW_WRITE = "1"; $env:RELAY_MCP_ROOT = "C:\work\project"
+powershell -ExecutionPolicy Bypass -File scripts\serve_remote.ps1
+```
+
+The server names any grant line it finds in `.env` at startup and in
+`relay.doctor` (`env_file_ignored`). Point `RELAY_MCP_ROOT` at the workspace
+the phone should edit, not at relay's own checkout: a written file can run
+later as code there. relay's shell is not path-confined: it starts in the run's
+root and can reach any path your account can, so enable remote exec only
+deliberately.
 
 ---
 

@@ -338,14 +338,15 @@ def _architect_mode_error(args) -> str:
 
 
 def _serve_mcp(args) -> int:
-    """Serve MCP with the write/exec grants of this launch: the flags, or
-    RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC. Tool arguments can only narrow them."""
+    """Serve MCP with the grants of this launch: the flags, or RELAY_ALLOW_WRITE /
+    RELAY_ALLOW_EXEC / RELAY_MCP_ROOT. Tool arguments can only narrow them."""
     import os
 
-    from .mcp_grants import describe, grants_from_launch
+    from .mcp_grants import describe, grants_from_launch, pin_root
     try:
-        grants = grants_from_launch(allow_write=args.allow_write,
-                                    allow_exec=args.allow_exec, env=os.environ)
+        grants = pin_root(grants_from_launch(allow_write=args.allow_write,
+                                             allow_exec=args.allow_exec, env=os.environ,
+                                             root=args.root))
     except ValueError as e:
         print(f"[error] {e}", file=sys.stderr)
         return 2
@@ -372,11 +373,12 @@ def main(argv: list[str] | None = None) -> int:
     # agentic mode
     ap.add_argument("--agent", action="store_true",
                     help="run the prompt as an agentic task with gated tools + a witnessed ledger")
-    ap.add_argument("--root", default=".", help="root for file tools read/list/write (--agent); "
-                    "note run/exec sets only cwd and is NOT confined to root")
+    ap.add_argument("--root", default=None, help="root for file tools read/list/write (--agent; "
+                    "default .); with --mcp, the launch root every run stays inside (also "
+                    "RELAY_MCP_ROOT); run/exec sets only cwd and is NOT confined to root")
     ap.add_argument("--allow-write", action="store_true", dest="allow_write",
                     help="enable file writes under --root; with --mcp, the most any MCP run "
-                    "may do (also RELAY_ALLOW_WRITE)")
+                    "may do, inside the launch root (also RELAY_ALLOW_WRITE)")
     ap.add_argument("--allow-exec", action="store_true", dest="allow_exec",
                     help="enable the run tool; a shell can write, so this implies --allow-write "
                     "and is not path-confined; with --mcp, the most any MCP run may do "
@@ -465,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report["contained"] == report["total"] else 1
     if args.mcp:
         return _serve_mcp(args)
+    args.root = args.root or "."
     if args.view:
         from .run_view import load_run, render, verify_edges
         try:

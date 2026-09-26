@@ -146,9 +146,11 @@ def test_the_env_file_name_follows_the_variable_the_entrypoint_reads():
 
 
 @pytest.mark.parametrize("raw,allowed", [("1", True), ("true", True), ("TRUE", True),
-                                         ("yes", True), ("", False), ("0", False),
-                                         ("no", False), ("maybe", False)])
+                                         ("yes", True), ("on", True), ("", False),
+                                         ("0", False), ("no", False), ("off", False)])
 def test_remote_exec_is_off_unless_it_is_explicitly_allowed(raw, allowed):
+    # Parsed like RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC; "maybe" is an error,
+    # covered in test_remote_launch_env.py.
     state = _state({"RELAY_REMOTE_TOKEN": "t", "RELAY_ALLOW_REMOTE_EXEC": raw})
     assert state["remote_exec_allowed"] is allowed
 
@@ -192,7 +194,9 @@ def test_the_launch_grants_are_read_out_and_a_bad_value_is_named():
     # what the surface would grant, and a typo reads as an error, not as off.
     state = _state({"RELAY_REMOTE_TOKEN": "t", "RELAY_ALLOW_WRITE": "1"})
     assert state["start_grants"] == {"allow_write": True, "allow_exec": False,
+                                     "root": None, "agent_cli_tiers": False,
                                      "shell_path_confined": False}
+    assert _state({"RELAY_MCP_ROOT": "/w"})["start_grants"]["root"] == "/w"
     assert _state({})["start_grants"]["allow_exec"] is False
     bad = _state({"RELAY_ALLOW_EXEC": "maybe"})["start_grants"]
     assert "RELAY_ALLOW_EXEC" in bad["error"]

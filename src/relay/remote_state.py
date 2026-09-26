@@ -47,13 +47,25 @@ OAUTH_REQUIRED = (
     "RELAY_AUTHORIZE_PASSWORD", "RELAY_OAUTH_REDIRECT_URIS",
 )
 
-_TRUE = ("1", "true", "yes")
+
+def _value(raw: str) -> str:
+    """One value: the text inside matching quotes, or the text before an unquoted
+    ``#`` that follows whitespace. ``KEY=   # note`` is an empty value."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] in "\"'" and raw[0] in raw[1:]:
+        return raw[1:raw.index(raw[0], 1)]
+    if raw.startswith("#"):
+        return ""
+    for i, ch in enumerate(raw):
+        if ch == "#" and raw[i - 1] in " \t":
+            return raw[:i].rstrip()
+    return raw
 
 
 def load_dotenv(path: str) -> dict[str, str]:
-    """A tiny stdlib .env reader (KEY=value lines, # comments), so secrets live in
-    a file instead of the process environment. No dependency; the real environment
-    still wins over the file."""
+    """A tiny stdlib .env reader (KEY=value lines, # comments, inline comments
+    after whitespace), so secrets live in a file instead of the process
+    environment. No dependency; the real environment still wins over the file."""
     file = pathlib.Path(path)
     if not file.exists():
         return {}
@@ -63,7 +75,7 @@ def load_dotenv(path: str) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        values[key.strip()] = _value(value)
     return values
 
 
@@ -78,18 +90,37 @@ def resolved_env(env: Mapping[str, str] | None = None,
     """The environment the remote server would see, and the file consulted.
 
     Composed exactly as ``remote_cli.main`` composes it: the file first, the real
-    environment over it. A caller that passes ``env`` is asking about that
-    environment rather than this process's.
+    environment over it. The launch grants, remote exec and the launch root
+    (LAUNCH_ONLY_KEYS) are never taken from the file: a run with the write grant
+    can rewrite that file, and would hand itself exec on the next restart. A
+    caller that passes ``env`` is asking about that environment rather than this
+    process's.
     """
+    from .mcp_grants import LAUNCH_ONLY_KEYS
     env = dict(os.environ if env is None else env)
     path = env_file if env_file is not None else env_file_path(env)
-    return {**load_dotenv(path), **env}, path
+    from_file = {k: v for k, v in load_dotenv(path).items() if k not in LAUNCH_ONLY_KEYS}
+    return {**from_file, **env}, path
+
+
+def ignored_file_keys(path: str) -> list[str]:
+    """Launch-only keys the env file sets, which the server ignores."""
+    from .mcp_grants import LAUNCH_ONLY_KEYS
+    return sorted(set(load_dotenv(path)) & set(LAUNCH_ONLY_KEYS))
 
 
 def _start_grants(resolved: Mapping[str, str]) -> dict:
-    from .mcp_grants import grants_from_env
+    from .mcp_grants import remote_grants
     try:
-        return grants_from_env(resolved).as_dict()
+        return remote_grants(resolved).as_dict()
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+def _remote_exec(resolved: Mapping[str, str]) -> "bool | dict":
+    from .mcp_grants import REMOTE_EXEC_ENV, parse_flag
+    try:
+        return parse_flag(resolved, REMOTE_EXEC_ENV)
     except ValueError as e:
         return {"error": str(e)}
 
@@ -110,6 +141,7 @@ def remote_state(env: Mapping[str, str] | None = None,
     present = {k: bool(resolved.get(k)) for k in PRESENCE_ONLY}
     missing_oauth = [k for k in OAUTH_REQUIRED if not resolved.get(k)]
     configured = present["RELAY_REMOTE_TOKEN"]
+    remote_exec, grants = _remote_exec(resolved), _start_grants(resolved)
     state = {
         "configured": configured,
         "reason": "" if configured
@@ -120,10 +152,16 @@ def remote_state(env: Mapping[str, str] | None = None,
         # Named, never valued: which keys the phone connector is still waiting on.
         "oauth_missing": missing_oauth,
         "tls_configured": present["RELAY_TLS_CERT"] and present["RELAY_TLS_KEY"],
-        "remote_exec_allowed": resolved.get("RELAY_ALLOW_REMOTE_EXEC", "").lower() in _TRUE,
-        # The launch grants remote_cli configures; remote exec needs both these
-        # and remote_exec_allowed.
-        "start_grants": _start_grants(resolved),
+        # The flag as set, and whether remote runs can reach a shell at all,
+        # which also needs RELAY_ALLOW_EXEC.
+        "remote_exec_allowed": remote_exec,
+        "remote_exec_in_effect": grants.get("allow_exec") is True,
+        # The grants remote_cli configures, from the process environment only:
+        # exec only with remote exec too, write only with RELAY_ALLOW_WRITE.
+        "start_grants": grants,
+        # Grant lines in the env file are ignored; named so an operator who put
+        # them there learns why the surface did not take them.
+        "env_file_ignored": ignored_file_keys(path),
         "public_url": resolved.get("RELAY_PUBLIC_URL") or None,
         "allowed_origins": _origins(resolved.get("RELAY_ALLOWED_ORIGINS", "")),
         "listen": {"host": resolved.get("RELAY_REMOTE_HOST") or None,

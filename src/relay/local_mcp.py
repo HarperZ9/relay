@@ -9,7 +9,7 @@ argument can only narrow them.
 """
 from __future__ import annotations
 
-import hashlib
+import argparse
 import json
 import os
 import sys
@@ -19,7 +19,23 @@ from .local_agent import LocalAgent, available_backends, health_report
 from .local_loop import run_agent
 from .local_session import SessionLedger
 from .local_tools import ToolExecutor, ToolGate
-from .mcp_grants import StartGrants, grants_from_env, narrow
+from .mcp_paths import GuardedExecutor, ProtectedPaths
+from .mcp_grants import (
+    SURFACE_EXEC_REFUSED,
+    StartGrants,
+    grants_from_launch,
+    launch_root,
+    pin_root,
+)
+from .mcp_request import (
+    MCPInputError,
+    as_bool as _as_bool,
+    as_int as _as_int,
+    as_str as _as_str,
+    refuse_cli_tier,
+    request_binding,
+    run_projection,
+)
 from .mcp_schema import TOOLS
 from .remote_state import remote_state
 
@@ -36,115 +52,47 @@ _GRANTS = StartGrants()
 
 
 def configure(grants: StartGrants) -> None:
-    """Set the launch grants. Runs already started keep the gate they began with."""
+    """Set the launch grants and pin the launch root. Runs already started keep
+    the gate and root they began with."""
     global _GRANTS
-    _GRANTS = grants
-
-
-class MCPInputError(ValueError):
-    """Typed user/request error returned as JSON instead of an opaque traceback."""
-
-    def __init__(self, code: str, message: str, *, request_binding: dict | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.request_binding = request_binding
-
-
-def _as_bool(args: dict, name: str) -> bool:
-    val = args.get(name, False)
-    if type(val) is bool:
-        return val
-    raise MCPInputError("INVALID_ARGUMENT", f"{name} must be a boolean")
-
-
-def _as_opt_bool(args: dict, name: str) -> bool | None:
-    return _as_bool(args, name) if name in args else None
-
-
-def _as_int(args: dict, name: str, default: int) -> int:
-    val = args.get(name, default)
-    if type(val) is not int:
-        raise MCPInputError("INVALID_ARGUMENT", f"{name} must be an integer")
-    num = val
-    if num < 0:
-        raise MCPInputError("INVALID_ARGUMENT", f"{name} must be non-negative")
-    return num
-
-
-def _as_str(args: dict, name: str, default: str = "",
-            *, required: bool = False) -> str:
-    if name not in args:
-        if required:
-            raise MCPInputError("INVALID_ARGUMENT", f"{name} is required")
-        return default
-    val = args[name]
-    if type(val) is str:
-        return val
-    raise MCPInputError("INVALID_ARGUMENT", f"{name} must be a string")
+    _GRANTS = pin_root(grants)
 
 
 def _request_binding(args: dict) -> dict:
-    goal = _as_str(args, "goal", required=True)
-    backend = _as_str(args, "backend", "auto") or "auto"
-    model = _as_str(args, "model", "")
-    root = _as_str(args, "root", ".") or "."
-    check = _as_str(args, "check", "")
-    test_cmd = _as_str(args, "test_cmd", "")
-    requested_allow_write = _as_opt_bool(args, "allow_write")
-    requested_allow_exec = _as_opt_bool(args, "allow_exec")
-    write, exec_ = narrow(_GRANTS, requested_allow_write, requested_allow_exec)
-    gate = ToolGate(allow_write=write, allow_exec=exec_)
-    binding = {
-        "schema": "relay.mcp-run-request/v2",
-        "goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest(),
-        "root": root,
-        "backend": backend,
-        "model": model,
-        "allow_write": gate.allow_write,
-        "allow_exec": gate.allow_exec,
-        "requested_allow_write": requested_allow_write,
-        "requested_allow_exec": requested_allow_exec,
-        "granted_allow_write": _GRANTS.allow_write,
-        "granted_allow_exec": _GRANTS.allow_exec,
-        "online": _as_bool(args, "online"),
-        "max_steps": _as_int(args, "max_steps", 6),
-        "max_tokens": _as_int(args, "max_tokens", 512),
-        "compact_budget": _as_int(args, "compact_budget", 0),
-        "check_present": bool(check),
-        "test_cmd_present": bool(test_cmd),
-    }
-    if check:
-        binding["check_sha256"] = hashlib.sha256(check.encode("utf-8")).hexdigest()
-    if test_cmd:
-        binding["test_cmd_sha256"] = hashlib.sha256(test_cmd.encode("utf-8")).hexdigest()
-    if check and not gate.allow_exec:
-        # check runs through a shell outside the tool gate. Over MCP the caller is
-        # not the operator, so without the exec grant it would be an exec bypass.
-        raise MCPInputError("EXEC_NOT_GRANTED",
-                            "check runs a shell command and this run has no exec grant "
-                            "(start the server with --allow-exec or RELAY_ALLOW_EXEC=1)",
-                            request_binding=binding)
-    return binding
+    return request_binding(args, _GRANTS)
 
 
-def _backends(args: dict) -> list:
+def _call_exec_ok() -> bool:
+    """Exec for a call with no run gate (chat, health): the launch grant, unless
+    the surface refuses exec for this request."""
+    return _GRANTS.allow_exec and not SURFACE_EXEC_REFUSED.get()
+
+
+def _backends(args: dict, exec_ok: bool) -> list:
     bs = available_backends(model=_as_str(args, "model", ""))
     if _as_bool(args, "online"):
-        from .endpoints import build_endpoints
-        bs = bs + build_endpoints()
+        from .endpoints import CliBackend, build_endpoints
+        online = build_endpoints()
+        if not exec_ok:
+            # codex exec / claude -p run an agent with its own shell.
+            online = [b for b in online if not isinstance(b, CliBackend)]
+        bs = bs + online
     return bs
 
 
 def _agent(args: dict, request_binding: dict | None = None) -> LocalAgent:
-    binding = request_binding or {
-        "backend": _as_str(args, "backend", "auto") or "auto",
-        "max_tokens": _as_int(args, "max_tokens", 512),
-    }
-    bs = _backends(args)
+    if request_binding is None:
+        exec_ok = _call_exec_ok()
+        binding = {"backend": _as_str(args, "backend", "auto") or "auto",
+                   "max_tokens": _as_int(args, "max_tokens", 512)}
+    else:
+        binding, exec_ok = request_binding, request_binding["allow_exec"]
     prefer = binding["backend"]
+    refuse_cli_tier(prefer, exec_ok, request_binding)
+    bs = _backends(args, exec_ok)
     if prefer != "auto" and prefer not in {getattr(b, "name", "") for b in bs}:
         raise MCPInputError("UNSUPPORTED_BACKEND", f"unsupported backend {prefer!r}",
-                            request_binding=binding)
+                            request_binding=request_binding)
     return LocalAgent(backends=bs, prefer=prefer, max_tokens=binding["max_tokens"])
 
 
@@ -161,9 +109,12 @@ def _typed_error(err: MCPInputError) -> dict:
 
 def _executor(args: dict, request_binding: dict | None = None) -> ToolExecutor:
     binding = request_binding or _request_binding(args)
-    return ToolExecutor(root=binding["root"],
-                        gate=ToolGate(allow_write=binding["allow_write"],
-                                      allow_exec=binding["allow_exec"]))
+    prot = binding["protected"]
+    return GuardedExecutor(root=binding["root"],
+                           gate=ToolGate(allow_write=binding["allow_write"],
+                                         allow_exec=binding["allow_exec"]),
+                           protected=ProtectedPaths(no_read=tuple(prot["no_read"]),
+                                                    no_write=tuple(prot["no_write"])))
 
 
 def _run_kwargs(args: dict, binding: dict) -> dict:
@@ -179,50 +130,11 @@ def _run_kwargs(args: dict, binding: dict) -> dict:
     return kwargs
 
 
-def _observed_route(r: dict) -> dict:
-    ledger = r.get("ledger")
-    entries = getattr(ledger, "entries", [])
-    for entry in reversed(entries):
-        if getattr(entry, "kind", None) != "assistant":
-            continue
-        meta = getattr(entry, "meta", {}) or {}
-        receipt = meta.get("receipt") if isinstance(meta, dict) else {}
-        if not isinstance(receipt, dict):
-            receipt = {}
-        return {
-            "backend": meta.get("backend"),
-            "model_ref": receipt.get("model_ref"),
-            "receipt_id": receipt.get("receipt_id"),
-            "source": "last_witnessed_assistant",
-            "seq": getattr(entry, "seq", None),
-        }
-    return {"backend": None, "model_ref": None, "receipt_id": None,
-            "source": "no_witnessed_assistant", "seq": None}
-
-
-def _run_projection(r: dict, request_binding: dict | None = None) -> dict:
-    # verified is the honest composite (chain + re-derivable receipts + a real final
-    # answer), never the self-confirming in-memory chain check alone.
-    out = {"final": r["final"], "steps": r["steps"], "verified": r["verified"],
-           "final_answer": r["final_answer"], "chain_ok": r["chain_ok"],
-           "checkpoint": r["checkpoint"],
-           "accepted": r.get("accepted"),
-           "check_passed": r.get("check_passed"),
-           "observed_route": _observed_route(r),
-           # the intent/scope audit (claimed_history + any declared drift/scope).
-           "intent_audit": r.get("intent_audit", {"findings": [], "critical": 0, "warnings": 0})}
-    if "note" in r:
-        out["note"] = r["note"]
-    if request_binding is not None:
-        out["request_binding"] = request_binding
-    return out
-
-
 def _call(params: dict) -> dict:
     name, args = params.get("name"), params.get("arguments", {}) or {}
     try:
         if name == "local_agent_health":
-            return _text(health_report(_backends(args)))
+            return _text(health_report(_backends(args, _call_exec_ok())))
         if name == "local_agent_chat":
             prompt = _as_str(args, "prompt", required=True)
             resp = _agent(args).send(prompt)
@@ -232,13 +144,13 @@ def _call(params: dict) -> dict:
             binding = _request_binding(args)
             r = run_agent(_agent(args, binding), args["goal"], _executor(args, binding), SessionLedger(),
                           **_run_kwargs(args, binding))
-            return _text(_run_projection(r, binding))
+            return _text(run_projection(r, binding))
         if name == "local_agent_start":
             binding = _request_binding(args)
             agent, goal, ex = _agent(args, binding), args["goal"], _executor(args, binding)
             kwargs = _run_kwargs(args, binding)
             run_id = RUNS.start(
-                lambda ledger: _run_projection(run_agent(agent, goal, ex, ledger, **kwargs), binding),
+                lambda ledger: run_projection(run_agent(agent, goal, ex, ledger, **kwargs), binding),
                 request_binding=binding)
             return _text({"run_id": run_id, "state": "running",
                           "request_binding": binding})
@@ -255,7 +167,7 @@ def _call(params: dict) -> dict:
             return _text(get_session(sdir, sid) if sid else list_sessions(sdir))
         if name in ("relay.status", "relay.doctor"):
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL,
-                    "grants": _GRANTS.as_dict()}
+                    "grants": {**_GRANTS.as_dict(), "root": launch_root(_GRANTS)}}
             if name == "relay.doctor":
                 info["local_tiers"] = [type(b).__name__ for b in available_backends()]
                 info["tools"] = [t["name"] for t in TOOLS]
@@ -319,8 +231,16 @@ def handle(req: dict):
 
 def serve(stdin=None, stdout=None, grants: StartGrants | None = None) -> int:
     """Serve stdio JSON-RPC. ``grants`` come from the launcher; with none passed,
-    RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC decide, and both default to off."""
-    configure(grants if grants is not None else grants_from_env(os.environ))
+    RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC / RELAY_MCP_ROOT decide. Write and exec
+    default to off, and the root to the working directory."""
+    try:
+        configure(grants if grants is not None else
+                  grants_from_launch(allow_write=False, allow_exec=False, env=os.environ))
+    except ValueError as e:
+        # A bad RELAY_ALLOW_* value or launch root stops the server with a
+        # message, the same as every launcher, rather than a traceback.
+        print(f"[error] {e}", file=sys.stderr)
+        return 2
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     for line in stdin:
         line = line.strip()
@@ -339,9 +259,18 @@ def serve(stdin=None, stdout=None, grants: StartGrants | None = None) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """``python -m relay.local_mcp``. The flags match ``relay --mcp``; an unknown
+    one stops the launch rather than being ignored."""
+    ap = argparse.ArgumentParser(prog="python -m relay.local_mcp")
+    ap.add_argument("--allow-write", action="store_true", help="the most any run may write")
+    ap.add_argument("--allow-exec", action="store_true", help="shell access; implies write")
+    ap.add_argument("--root", default=None, help="launch root; runs stay inside it")
+    args = ap.parse_args(argv)
     try:
-        grants = grants_from_env(os.environ)
+        grants = pin_root(grants_from_launch(allow_write=args.allow_write,
+                                             allow_exec=args.allow_exec,
+                                             env=os.environ, root=args.root))
     except ValueError as e:
         print(f"[error] {e}", file=sys.stderr)
         return 2

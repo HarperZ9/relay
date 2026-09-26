@@ -7,7 +7,7 @@ contract.
 """
 from __future__ import annotations
 
-_ONLINE = {"online": {"type": "boolean", "description": "include codex/claude/gemini/deepseek"}}
+_ONLINE = {"online": {"type": "boolean", "description": "include codex/claude/gemini/deepseek; the codex and claude CLI tiers start an agent with its own shell, so they need the exec grant"}}
 _RUN_ID = {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "string"}}}
 _RUN_OPTIONS = {
     "backend": {"type": "string", "description": "preferred backend name, or auto"},
@@ -18,19 +18,24 @@ _RUN_OPTIONS = {
     "compact_budget": {"type": "integer", "description": "optional prompt compaction budget"},
 }
 _RUN_ARGS = {"type": "object", "required": ["goal"],
-             "properties": {"goal": {"type": "string"}, "root": {"type": "string"},
-                            "allow_write": {"type": "boolean", "description": "narrow only: false turns write (and exec) off for this run; true cannot grant what the server was not started with"},
-                            "allow_exec": {"type": "boolean", "description": "narrow only: false turns exec off for this run; true cannot grant what the server was not started with"},
+             "properties": {"goal": {"type": "string"},
+                            "root": {"type": "string", "description": "this run's root; must resolve inside the root the server was launched with (a relative path resolves under it)"},
+                            "allow_write": {"type": "boolean", "description": "ask for write on this run. Narrow only: omitted or false means off, and true cannot grant what the server was not started with; false also turns exec off"},
+                            "allow_exec": {"type": "boolean", "description": "ask for a shell on this run, which also asks for write. Narrow only: omitted or false means off, and true cannot grant what the server was not started with"},
                             "max_steps": {"type": "integer"}, **_RUN_OPTIONS, **_ONLINE}}
 
 _GRANT_NOTE = (
     "Write and exec come from how the server was started (--allow-write / --allow-exec, or "
-    "RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC); both are off by default. The allow_write and "
-    "allow_exec arguments can only narrow those grants for one run, never widen them. Exec "
-    "implies write, and allow_write=false also turns exec off. check runs a shell, so it needs "
-    "the exec grant. File tools (read/list/write) are confined to root. The shell is NOT "
-    "path-confined: run, test_cmd and check start in root and can reach any path the server's "
-    "user can.")
+    "RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC); both are off by default. A run asks for them with "
+    "allow_write / allow_exec: an omitted argument asks for nothing, and the arguments can only "
+    "narrow the launch grants, never widen them. allow_exec=true also asks for write, and "
+    "allow_write=false turns exec off. check, test_cmd and the online codex/claude CLI tiers "
+    "reach a shell, so they need exec. root must resolve inside the root the server was "
+    "launched with (--root or RELAY_MCP_ROOT). File tools (read/list/write) are confined to "
+    "root, never read the server's env file, and never write it, the run and session stores, or "
+    ".git. The shell is NOT path-confined: run, test_cmd and check start in root and can reach "
+    "any path the server's user can. A written file can also run later as code, for example "
+    "a build script.")
 
 TOOLS = [
     {"name": "local_agent_health",
