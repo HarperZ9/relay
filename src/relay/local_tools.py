@@ -3,13 +3,12 @@
 Small local models cannot be trusted with native tool-calling or with an open
 shell, so the tool surface is (1) a simple text protocol a 7B model can emit
 reliably, and (2) gated by default: file reads/lists/writes are sandboxed to a
-root; writes and command execution are OFF unless explicitly allowed. Two honest
-limits on the exec path: `run` sets only cwd, so an allowed shell reaches paths
-OUTSIDE the root (it is not _safe_path-confined like the file tools); and its
-denylist catches only a few literal spellings of destructive commands (a
-guardrail against a small model, not a security boundary — trivial variants slip
-through). Because a shell can write, --allow-exec implies --allow-write. Every
-call returns a ToolResult the loop records into the witnessed session ledger.
+root; writes and command execution are OFF unless explicitly allowed. `run` gets
+an environment allowlist (child_env), so no provider key reaches it. Two honest
+limits: an allowed shell reaches paths OUTSIDE the root (not _safe_path-confined
+like the file tools), and its denylist catches only a few literal spellings of
+destructive commands (a guardrail, not a security boundary). --allow-exec implies
+--allow-write. Each call returns a ToolResult the loop records in the ledger.
 
 Protocol (one call per line, args as a JSON object):
     TOOL read_file {"path": "harness/loop.py"}
@@ -25,6 +24,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 
+from .child_env import shell_env
 from .hashline import annotate_hashed, as_lines, resolve_anchor
 from .tools_prompt import TOOLS_SYSTEM  # re-exported: `from .local_tools import TOOLS_SYSTEM`
 
@@ -295,6 +295,6 @@ class ToolExecutor:
         if self.runner is not None:
             return self.runner(cmd, self.root)
         proc = subprocess.run(cmd, shell=True, cwd=self.root, capture_output=True,
-                              text=True, timeout=120)
+                              text=True, timeout=120, env=shell_env())
         out = (proc.stdout or "") + (proc.stderr or "")
         return proc.returncode == 0, f"[exit {proc.returncode}]\n{out}"

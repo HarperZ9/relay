@@ -189,7 +189,8 @@ def _run_acceptance(check: "str | None", executor: ToolExecutor,
         if executor.runner is not None:            # injected for tests
             ok, out = executor.runner(check, executor.root)
         else:
-            proc = subprocess.run(check, shell=True, cwd=executor.root,
+            from .child_env import shell_env
+            proc = subprocess.run(check, shell=True, cwd=executor.root, env=shell_env(),
                                   capture_output=True, text=True, timeout=_CHECK_TIMEOUT)
             ok = proc.returncode == 0
             out = f"[exit {proc.returncode}]\n{(proc.stdout or '') + (proc.stderr or '')}"

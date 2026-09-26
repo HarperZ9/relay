@@ -36,8 +36,11 @@ REMOTE_EXEC_ENV = "RELAY_ALLOW_REMOTE_EXEC"
 
 # Keys a launcher reads from the process environment and never from an env file.
 # A run with the write grant can rewrite a file in its root, so a grant read from
-# that file would be a grant the caller could hand itself on the next restart.
-LAUNCH_ONLY_KEYS = (WRITE_ENV, EXEC_ENV, REMOTE_EXEC_ENV, ROOT_ENV)
+# that file would be a grant the caller could hand itself on the next restart. The
+# same holds for what children inherit (RELAY_CHILD_ENV), which unproven agent
+# CLIs may start (RELAY_ALLOW_EXEC_CLI), and which program a CLI tier runs.
+LAUNCH_ONLY_KEYS = (WRITE_ENV, EXEC_ENV, REMOTE_EXEC_ENV, ROOT_ENV, "RELAY_CHILD_ENV",
+                    "RELAY_ALLOW_EXEC_CLI", "RELAY_CLAUDE_CLI", "RELAY_CODEX_CLI")
 
 # Set by a surface that refuses exec on top of the launch grants (the remote
 # surface without RELAY_ALLOW_REMOTE_EXEC) for the one request it is handling.

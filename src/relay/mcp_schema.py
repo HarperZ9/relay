@@ -62,8 +62,10 @@ TOOLS = [
      "description": "List recent background runs (newest first) with state, timing, and step count, so a phone that lost a run_id after a restart can find it again. Persisted runs (RELAY_RUN_ROOT) survive a restart; a run cut off mid-flight lists as 'interrupted'.",
      "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 0}}}},
     {"name": "local_agent_sessions",
-     "description": "List saved relay sessions (witnessed ledgers under RELAY_SESSION_DIR) so a session started on the PC can be reopened from another device; each is re-verified on load. Pass session_id to get that session's transcript.",
-     "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}}},
+     "description": "List saved relay sessions (witnessed ledgers under RELAY_SESSION_DIR, or a per-user folder when it is unset) so a session started on the PC can be reopened from another device; each is re-verified on load, and a file that will not parse is counted in skipped. Pass session_id, a bare name, to get that session's transcript.",
+     "inputSchema": {"type": "object", "properties": {"session_id": {
+         "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$",
+         "description": "A saved session's name: letters, digits, '.', '_' or '-', no path."}}}},
     {"name": "relay.status",
      "description": "Liveness and identity of the relay MCP server (name, version, protocol). Network-free, for a fast health probe.",
      "inputSchema": {"type": "object", "properties": {}}},

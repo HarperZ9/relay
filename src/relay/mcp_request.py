@@ -54,19 +54,30 @@ def as_str(args: dict, name: str, default: str = "", *, required: bool = False) 
     raise MCPInputError("INVALID_ARGUMENT", f"{name} must be a string")
 
 
-def cli_tier_names() -> set[str]:
-    """Names of the online tiers that start an agentic CLI (codex exec, claude -p).
-    Those CLIs run their own shell, so a tier among them needs the exec grant."""
+def cli_tier_profiles() -> dict[str, str | None]:
+    """{tier name: isolation profile} for the online tiers that start an agent CLI
+    (codex exec, claude -p). Those CLIs carry their own tools, so a tier among them
+    needs the exec grant, and one whose profile is unproven also needs the launch
+    to name it in RELAY_ALLOW_EXEC_CLI."""
     from .endpoints import PROVIDERS
-    return {f"{p}-{mode}" for p, spec in PROVIDERS.items() if spec.get("cli")
-            for mode in ("plan", "max")}
+    return {f"{p}-{mode}": spec["cli"].get("profile") for p, spec in PROVIDERS.items()
+            if spec.get("cli") for mode in ("plan", "max")}
 
 
 def refuse_cli_tier(prefer: str, exec_ok: bool, binding: dict | None = None) -> None:
-    if not exec_ok and prefer in cli_tier_names():
+    from .child_env import EXEC_CLI_ENV, cli_allowed
+    tiers = cli_tier_profiles()
+    if prefer not in tiers:
+        return
+    if not exec_ok:
         raise MCPInputError("EXEC_NOT_GRANTED",
                             f"backend {prefer!r} starts an agentic CLI with its own shell, and "
                             "this call has no exec grant", request_binding=binding)
+    if not cli_allowed(tiers[prefer]):
+        raise MCPInputError("EXEC_NOT_GRANTED",
+                            f"backend {prefer!r} starts a CLI whose isolation profile is not "
+                            f"proven; the launch must name it in {EXEC_CLI_ENV}",
+                            request_binding=binding)
 
 
 def _shortfall(requested_write, requested_exec, write: bool, exec_: bool) -> list[str]:

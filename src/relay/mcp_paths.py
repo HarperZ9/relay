@@ -7,9 +7,12 @@ So an MCP run's file tools also refuse:
 - the env file the remote entrypoint reads (RELAY_ENV_FILE, default ``.env``),
   for reads and writes: it holds the bearer token and the OAuth secrets;
 - writes into the run store (RELAY_RUN_ROOT) and the session store
-  (RELAY_SESSION_DIR), whose records a run could otherwise forge;
+  (RELAY_SESSION_DIR or its per-user default), whose records a run could forge;
 - writes into any ``.git`` directory, where a hook or a config line runs code
-  the next time git runs in that tree.
+  the next time git runs in that tree;
+- writes into agent and editor configuration (``.claude``, ``.codex``,
+  ``.cursor``, ``.vscode``, ``.gemini``, ``.agents``, ``.opencode``, ``.mcp.json``),
+  whose hooks, tasks and MCP servers run the next time a tool opens the tree.
 
 On Windows a name that ends in a dot or a space, or that names a stream
 (``a:b``), opens another spelling of a file, so a write to one is refused.
@@ -27,7 +30,9 @@ from dataclasses import dataclass, field
 from .local_tools import WRITE_TOOLS, ToolExecutor, ToolResult, _safe_path, edited_targets
 
 NO_WRITE_NAMES = (".git",)
-_STORE_KEYS = ("RELAY_RUN_ROOT", "RELAY_SESSION_DIR")
+AGENT_CONFIG_NAMES = (".claude", ".codex", ".cursor", ".vscode", ".gemini", ".agents",
+                      ".opencode", ".mcp.json")
+_STORE_KEYS = ("RELAY_RUN_ROOT",)
 
 
 def _canon(path: str) -> str:
@@ -45,14 +50,15 @@ class ProtectedPaths:
 
     def as_dict(self) -> dict:
         return {"no_read": list(self.no_read), "no_write": list(self.no_write),
-                "no_write_names": list(NO_WRITE_NAMES)}
+                "no_write_names": [*NO_WRITE_NAMES, *AGENT_CONFIG_NAMES]}
 
 
 def protected_paths(env: Mapping[str, str]) -> ProtectedPaths:
     """The server's own paths, resolved now against the server's working directory."""
     from .remote_state import env_file_path
+    from .session_store import session_dir
     env_file = _canon(env_file_path(env))
-    stores = tuple(_canon(env[k]) for k in _STORE_KEYS if env.get(k))
+    stores = (*(_canon(env[k]) for k in _STORE_KEYS if env.get(k)), _canon(session_dir(env)))
     return ProtectedPaths(no_read=(env_file,), no_write=(env_file, *stores))
 
 
@@ -70,9 +76,11 @@ def _write_refusal(root: str, rel: str, prot: ProtectedPaths, windows: bool) -> 
     if target is None:
         return None                      # the tool itself reports the escape
     inner = os.path.relpath(target, os.path.realpath(root))
-    names = {os.path.normcase(p) for p in re.split(r"[\\/]", inner)}
+    names = {p.lower() for p in re.split(r"[\\/]", inner)}
     if names & set(NO_WRITE_NAMES):
         return f"{rel!r} is inside a .git directory, where a write can run as code"
+    if names & set(AGENT_CONFIG_NAMES):
+        return f"{rel!r} is agent or editor configuration, which can run as code"
     if any(_within(os.path.normcase(target), p) for p in prot.no_write):
         return f"{rel!r} belongs to the relay server (env file, run or session store)"
     return None
