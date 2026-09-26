@@ -14,6 +14,8 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
+from ._vendor import safe_spawn
+
 
 @dataclass
 class GitRepo:
@@ -23,7 +25,11 @@ class GitRepo:
     def _run(self, *args):
         if self.run is not None:
             return self.run(list(args))
-        return subprocess.run(["git", "-C", self.root, *args],
+        try:  # an absolute git: a git.exe in the working folder never runs
+            git = safe_spawn.resolve("git")
+        except safe_spawn.SpawnRefused as e:
+            raise OSError(str(e)) from e
+        return subprocess.run([git, "-C", self.root, *args],
                               capture_output=True, text=True, timeout=30)
 
     def is_repo(self) -> bool:

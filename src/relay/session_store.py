@@ -64,6 +64,14 @@ def _inside(directory: str, path: str) -> bool:
     return os.path.dirname(real) == base
 
 
+def _mtime(path: str) -> float:
+    """Sort key; a dangling link or a file removed mid-listing sorts last."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
 def _first_goal(ledger) -> str:
     for e in ledger.entries:
         if e.kind == "user":
@@ -87,10 +95,10 @@ def list_sessions(directory: str) -> dict:
     and counted rather than crashing the listing."""
     if not os.path.isdir(directory):
         return {"sessions": [], "count": 0, "skipped": 0}
-    names = [n for n in os.listdir(directory)
-             if n.endswith(".jsonl") and valid_session_id(n[:-6])]
-    names.sort(key=lambda n: os.path.getmtime(os.path.join(directory, n)), reverse=True)
-    rows, skipped = [], 0
+    found = [n for n in os.listdir(directory) if n.endswith(".jsonl")]
+    names = [n for n in found if valid_session_id(n[:-6])]  # the rest cannot be opened by id
+    names.sort(key=lambda n: _mtime(os.path.join(directory, n)), reverse=True)
+    rows, skipped = [], len(found) - len(names)
     for name in names:
         path = os.path.join(directory, name)
         try:
