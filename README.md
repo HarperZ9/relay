@@ -335,10 +335,13 @@ in or the server's folder: an entry naming that folder or a folder below it,
 another spelling of it, or a junction or symlink to it. That keeps a program
 planted in a project from standing in for an installed `claude`, `codex`, `git`
 or shell tool, or for a program git starts itself, such as a clean filter or
-`gpg`; the 0.4.1 changelog lists the limits. A bisect check runs in a copy of
+`gpg`; the 0.5.0 changelog lists the limits. A bisect check runs in a copy of
 the project, and guards the project it copied. A tool in a project's
-`.venv/bin` or `node_modules/.bin` then needs its path, unless relay itself
-runs from that virtual environment, whose folder stays on `PATH`.
+`.venv/bin` or `node_modules/.bin` then needs its path. The folder that holds
+the interpreter relay runs on stays on `PATH`, so relay started from the
+project's virtual environment keeps that environment's tools (`.venv/bin`, or
+`.venv\Scripts` on Windows). Tools in other folders inside the project, such
+as a Windows conda environment's `Scripts` and `Library\bin`, need their path.
 
 The `claude` and `codex` CLI tiers start isolated: the executable resolves to an
 absolute path (`RELAY_CLAUDE_CLI` and `RELAY_CODEX_CLI` override it and must be

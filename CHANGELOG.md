@@ -1,16 +1,20 @@
 # Changelog
 
-## 0.4.1, 2026-09-27
+## 0.5.0, 2026-09-27
 
 A program planted in a project folder no longer runs through a `PATH` entry that
 reaches that folder. 0.4.0 started its children through `safe_spawn` 1.0.0,
 which skipped only relative `PATH` entries. This release vendors `safe_spawn`
-1.0.1 and hands it the folder each child works in. One thing an existing setup
-may rely on changes: a `run`, `test_cmd` or `check` command no longer finds a
-program through a project folder on `PATH`, such as `.venv/bin` or
-`node_modules/.bin`. The folder of the interpreter relay runs on is kept.
-The MCP tool names, the `relay.mcp-run-request/v2` binding and the shapes of
-`relay.status` and `relay.doctor` are unchanged.
+1.0.1 and hands it the folder each child works in.
+
+This was prepared as a 0.4.1 patch. It takes the minor number instead because
+it changes what existing setups do, the rule 0.3.0 set for a pre-1.0 break: a
+`run`, `test_cmd` or `check` command, or a git hook or filter during
+`--auto-commit`, no longer finds a program through a project folder on `PATH`,
+such as `.venv/bin` or `node_modules/.bin`, unless that folder holds the
+interpreter relay runs on. A pin such as `~=0.4.0` excludes this release;
+widen it to take the fix. The MCP tool names, the `relay.mcp-run-request/v2`
+binding and the shapes of `relay.status` and `relay.doctor` are unchanged.
 
 Source version metadata is not release availability proof; release availability
 is established only by the accepted Git tag, uploaded GitHub Release assets, and
@@ -58,9 +62,12 @@ the HarperZ9 Relay distribution.
   folder inside the root or the server's folder, such as a project's
   `.venv/bin` or `node_modules/.bin`, now needs that program's path
   (`.venv/bin/pytest`). So does a git hook or filter that found a program that
-  way during `--auto-commit`. Starting relay from that virtual environment also
-  works: the folder of the interpreter relay runs on always stays on `PATH`, and
-  on Windows so do the Windows, System32 and SysWOW64 folders.
+  way during `--auto-commit`. The folder that holds the interpreter relay runs
+  on stays on `PATH`, so starting relay from the project's virtual environment
+  keeps that environment's tools (`.venv/bin`, or `.venv\Scripts` on Windows).
+  Tools in other folders inside the project, such as a Windows conda
+  environment's `Scripts` and `Library\bin`, need their path. On Windows the
+  Windows, System32 and SysWOW64 folders also stay.
 - A child's `PATH` names each kept folder as its real folder, with links
   resolved, so a link repointed after the check cannot change what starts. On
   merged-/usr Linux, `/bin` reaches a child as `/usr/bin`.
@@ -82,6 +89,12 @@ the HarperZ9 Relay distribution.
   `PATH` entry on the working folder's device leaves. A CLI there needs
   `RELAY_CLAUDE_CLI` or `RELAY_CODEX_CLI`, and a shell tool there needs its
   path.
+- Each start reads every `PATH` entry, a step that took under 1 ms on 0.4.0.
+  On Windows, with 58 entries, one read took about 11 ms. Under WSL with the
+  Windows `PATH` appended (67 entries, 58 of them under `/mnt`) it took 0.5 to
+  1.3 s, and under 1 ms with the `/mnt` entries removed. Every shell child and
+  every CLI tier start pays at least one read. An `--auto-commit` reads `PATH`
+  once for all its git calls, about 1.3 s there against 12 ms on 0.4.0.
 - The new tests ran on Windows 11 and on Linux (Ubuntu 24.04 under WSL2).
   macOS was not run.
 
