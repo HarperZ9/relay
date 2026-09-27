@@ -66,6 +66,17 @@ def plant_binary(folder, name, marker):
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
 
 
+def plant_script(folder, name, marker):
+    """A script named like a program that writes `marker` and prints PLANTED if it
+    ever runs. A batch file on Windows, so it wins only against other batch files."""
+    if WINDOWS:
+        return _write(os.path.join(folder, name + ".cmd"),
+                      f'@echo off\r\necho x> "{marker}"\r\necho PLANTED\r\n', newline="")
+    path = _write(os.path.join(folder, name), f'#!/bin/sh\necho x > "{marker}"\necho PLANTED\n')
+    os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    return path
+
+
 def make_world(tmp_path, monkeypatch):
     """A server folder holding a project settings hook, and a bin folder on PATH
     after a "." entry. Fake provider keys sit in the environment."""

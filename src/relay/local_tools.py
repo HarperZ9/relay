@@ -295,6 +295,6 @@ class ToolExecutor:
         if self.runner is not None:
             return self.runner(cmd, self.root)
         proc = subprocess.run(cmd, shell=True, cwd=self.root, capture_output=True,
-                              text=True, timeout=120, env=shell_env())
+                              text=True, timeout=120, env=shell_env(cwd=self.root))
         out = (proc.stdout or "") + (proc.stderr or "")
         return proc.returncode == 0, f"[exit {proc.returncode}]\n{out}"

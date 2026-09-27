@@ -50,7 +50,7 @@ def edit_set(ledger) -> list:
 def _default_runner(check: str, root: str):
     from .child_env import shell_env
     proc = subprocess.run(check, shell=True, cwd=root, capture_output=True,
-                          text=True, timeout=_CHECK_TIMEOUT, env=shell_env())
+                          text=True, timeout=_CHECK_TIMEOUT, env=shell_env(cwd=root))
     return proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
 
 

@@ -7,7 +7,8 @@ the server's environment never reaches a shell a model drives or a CLI tier.
 
 - Shell children (``run``, ``test_cmd``, ``check``, bisect checks) also keep a
   fixed set of toolchain variables that locate interpreters and caches and hold
-  no secret.
+  no secret. Their PATH also drops every entry that reaches the folder they run
+  in, so a program planted in a run's root is never found by bare name.
 - ``RELAY_CHILD_ENV`` names more variables to pass, comma separated, for every
   child (a proxy, a key a test suite needs). It is read from the process
   environment that starts relay, never from an env file (LAUNCH_ONLY_KEYS).
@@ -49,9 +50,14 @@ def named_cli_grants(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
     return tuple(n.lower() for n in _names(env.get(EXEC_CLI_ENV, "")))
 
 
-def shell_env(env: Mapping[str, str] | None = None) -> dict:
-    """The environment for a shell child: base, toolchain and named variables."""
-    return safe_spawn.child_env(allow=(*TOOLCHAIN_ENV, *named_extra(env)), environ=env)
+def shell_env(env: Mapping[str, str] | None = None, cwd: str | None = None) -> dict:
+    """The environment for a shell child: base, toolchain and named variables.
+
+    `cwd` is the folder the child runs in. PATH entries that reach it, or the
+    server's own folder, are left out.
+    """
+    return safe_spawn.child_env(allow=(*TOOLCHAIN_ENV, *named_extra(env)), environ=env,
+                                cwd=cwd)
 
 
 def profile_proven(profile: str | None) -> bool:

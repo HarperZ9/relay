@@ -25,8 +25,8 @@ class GitRepo:
     def _run(self, *args):
         if self.run is not None:
             return self.run(list(args))
-        try:  # an absolute git: a git.exe in the working folder never runs
-            git = safe_spawn.resolve("git")
+        try:  # an absolute git, never one in the server's folder or the repo
+            git = safe_spawn.resolve("git", cwd=self.root)
         except safe_spawn.SpawnRefused as e:
             raise OSError(str(e)) from e
         return subprocess.run([git, "-C", self.root, *args],
