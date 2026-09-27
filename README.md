@@ -319,14 +319,29 @@ digits, `.`, `_` and `-`, and refuses anything else with `INVALID_ARGUMENT`. A
 file that will not parse is skipped and counted in `skipped`. The stdio
 `relay.doctor` reads an env file only when `RELAY_ENV_FILE` names one.
 
-What relay's children see. Every program relay starts gets an environment
-allowlist, not the server's whole environment: the platform base (`PATH` with
-absolute entries only, the system and profile folders), and for shells a fixed
-set of toolchain variables such as `VIRTUAL_ENV`, `JAVA_HOME` and `CARGO_HOME`.
-No provider key reaches `run`, `test_cmd`, `check` or a CLI tier. To pass more,
-list the names in `RELAY_CHILD_ENV` (comma separated) in the environment that
-starts relay. On Windows a shell no longer finds a program in the root by bare
-name; call it as `.\tool`.
+What relay's children see. The shells and CLI tiers relay starts get an
+environment allowlist, not the server's whole environment: the platform base
+(`PATH` with absolute entries only, the system and profile folders), and for
+shells a fixed set of toolchain variables such as `VIRTUAL_ENV`, `JAVA_HOME` and
+`CARGO_HOME`. No provider key reaches `run`, `test_cmd`, `check` or a CLI tier.
+To pass more, list the names in `RELAY_CHILD_ENV` (comma separated) in the
+environment that starts relay. On Windows a shell no longer finds a program in
+the root by bare name; call it as `.\tool`. The `git` that `--auto-commit` runs
+keeps the whole environment, since it reads your GPG, SSH and git settings from
+it.
+
+A child's `PATH` also loses every entry that reaches the folder the child works
+in or the server's folder: an entry naming that folder or a folder below it,
+another spelling of it, or a junction or symlink to it. That keeps a program
+planted in a project from standing in for an installed `claude`, `codex`, `git`
+or shell tool, or for a program git starts itself, such as a clean filter or
+`gpg`; the 0.5.0 changelog lists the limits. A bisect check runs in a copy of
+the project, and guards the project it copied. A tool in a project's
+`.venv/bin` or `node_modules/.bin` then needs its path. The folder that holds
+the interpreter relay runs on stays on `PATH`, so relay started from the
+project's virtual environment keeps that environment's tools (`.venv/bin`, or
+`.venv\Scripts` on Windows). Tools in other folders inside the project, such
+as a Windows conda environment's `Scripts` and `Library\bin`, need their path.
 
 The `claude` and `codex` CLI tiers start isolated: the executable resolves to an
 absolute path (`RELAY_CLAUDE_CLI` and `RELAY_CODEX_CLI` override it and must be

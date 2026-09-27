@@ -12,25 +12,40 @@ inside an existing repo, and only when there are changes.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ._vendor import safe_spawn
+from .child_env import guarded_path_env
 
 
 @dataclass
 class GitRepo:
     root: str
     run: "callable" = None      # inject (args:list)->obj(returncode,stdout,stderr) for tests
+    _start: "tuple | None" = field(default=None, init=False, repr=False)
+
+    def _git(self) -> tuple:
+        """git's absolute path and the environment it runs with, looked up once.
+
+        Each lookup reads every PATH entry, which takes about a second where PATH
+        is long and slow to read (WSL with the Windows PATH appended), so a GitRepo
+        looks once. Build a new one to see a changed PATH.
+        """
+        if self._start is None:
+            try:  # an absolute git, never one in the server's folder or the repo
+                git = safe_spawn.resolve("git", cwd=self.root)
+            except safe_spawn.SpawnRefused as e:
+                raise OSError(str(e)) from e
+            # git starts a filter, gpg or a hook's tools by bare name: guard its PATH too
+            self._start = (git, guarded_path_env(self.root))
+        return self._start
 
     def _run(self, *args):
         if self.run is not None:
             return self.run(list(args))
-        try:  # an absolute git: a git.exe in the working folder never runs
-            git = safe_spawn.resolve("git")
-        except safe_spawn.SpawnRefused as e:
-            raise OSError(str(e)) from e
+        git, env = self._git()
         return subprocess.run([git, "-C", self.root, *args],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, timeout=30, env=env)
 
     def is_repo(self) -> bool:
         try:

@@ -40,7 +40,7 @@ from .mcp_schema import TOOLS
 from .remote_state import remote_state
 
 PROTOCOL = "2025-06-18"
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Background runs, so a phone can start a long agentic task and poll it instead of
 # holding one blocking HTTP request open across a flaky mobile network. With
