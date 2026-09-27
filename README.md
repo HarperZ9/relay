@@ -328,6 +328,14 @@ list the names in `RELAY_CHILD_ENV` (comma separated) in the environment that
 starts relay. On Windows a shell no longer finds a program in the root by bare
 name; call it as `.\tool`.
 
+A child's `PATH` also loses every entry that reaches the folder the child works
+in or the server's folder: an entry naming that folder or a folder below it,
+another spelling of it, or a junction or symlink to it. That keeps a program
+planted in a project from standing in for an installed `claude`, `codex`, `git`
+or shell tool; the 0.4.1 changelog lists the limits. A tool in a project's
+`.venv/bin` or `node_modules/.bin` then needs its path, unless relay itself
+runs from that virtual environment, whose folder stays on `PATH`.
+
 The `claude` and `codex` CLI tiers start isolated: the executable resolves to an
 absolute path (`RELAY_CLAUDE_CLI` and `RELAY_CODEX_CLI` override it and must be
 absolute), the child runs in a new empty folder, the prompt goes on stdin, and

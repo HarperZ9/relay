@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.4.1, 2026-09-27
+
+A program planted in a project folder no longer runs through a `PATH` entry that
+reaches that folder. 0.4.0 started its children through `safe_spawn` 1.0.0,
+which skipped only relative `PATH` entries. This release vendors `safe_spawn`
+1.0.1 and hands it the folder each child works in. One thing an existing setup
+may rely on changes: a `run`, `test_cmd` or `check` command no longer finds a
+program through a project folder on `PATH`, such as `.venv/bin` or
+`node_modules/.bin`. The folder of the interpreter relay runs on is kept.
+The MCP tool names, the `relay.mcp-run-request/v2` binding and the shapes of
+`relay.status` and `relay.doctor` are unchanged.
+
+Source version metadata is not release availability proof; release availability
+is established only by the accepted Git tag, uploaded GitHub Release assets, and
+matching hash readback. Do not publish or recommend the bare PyPI name
+`relay-agent`; that public namespace belongs to an unrelated project and is not
+the HarperZ9 Relay distribution.
+
+### Security
+
+- An absolute `PATH` entry could reach a folder a child works in: the server's
+  folder, the root of a `run`, `test_cmd`, `check` or bisect check, or the
+  repository `--auto-commit` commits to. The entry could name the folder or a
+  folder below it, spell it another way, or lead there through a junction or
+  symlink. On Windows a quoted entry such as `"C:\proj"\bin` reached it too,
+  because cmd.exe drops the quotes. A program planted there ran in place of the
+  installed `claude`, `codex` or `git`, including the `--version` check that
+  `relay.doctor` starts under exec, and a shell child found it by bare name.
+  Affected: every release through 0.4.0. 0.4.0 closed the direct search of the
+  server's folder and left these routes open.
+- On Windows a drive-relative name such as `C:claude` named a file in the
+  current folder of drive C:. relay's own tiers use fixed names, so this needed
+  a caller that builds a `CliBackend` with such a name. It is now refused with
+  `BAD_PATH`.
+
+### Changed
+
+- The vendored `safe_spawn` is 1.0.1 (`src/relay/_vendor/safe_spawn.py`,
+  SHA-256 recorded in `VENDORED.sha256`). It drops every `PATH` entry that
+  reaches the server's folder or the folder named for the child, from the
+  lookup and from the child's `PATH`. Folders are compared by name and by file
+  identity after links are resolved.
+- `run`, `test_cmd`, `check` and bisect checks hand their root to the helper,
+  and `--auto-commit` resolves `git` with the repository as the named folder.
+- A command in `run`, `test_cmd` or `check` that found a program through a
+  folder inside the root or the server's folder, such as a project's
+  `.venv/bin` or `node_modules/.bin`, now needs that program's path
+  (`.venv/bin/pytest`). Starting relay from that virtual environment also
+  works: the folder of the interpreter relay runs on always stays on `PATH`, and
+  on Windows so do the Windows, System32 and SysWOW64 folders.
+- A child's `PATH` names each kept folder as its real folder, with links
+  resolved, so a link repointed after the check cannot change what starts. On
+  merged-/usr Linux, `/bin` reaches a child as `/usr/bin`.
+- On Windows, `PATH` is read the way cmd.exe reads it, quotes included. An entry
+  whose folder name holds `;` is left out, since Windows programs disagree on
+  how to read it.
+- On POSIX, a `PATH` that the filter leaves empty reaches the child as
+  `/bin:/usr/bin`, because an empty `PATH` means the current folder there.
+
+### Limits
+
+- When the server's folder or a run's root is a filesystem root, or holds the
+  home folder, only an entry naming that folder itself leaves. The tool folders
+  below home, such as `~/.local/bin`, stay.
+- The check reads the filesystem before the start. Swapping the program file,
+  or a folder inside a kept folder, between the two still wins. That needs write
+  access to a folder `PATH` already trusts.
+- On a filesystem without file indices, such as some network shares, every
+  `PATH` entry on the working folder's device leaves. A CLI there needs
+  `RELAY_CLAUDE_CLI` or `RELAY_CODEX_CLI`, and a shell tool there needs its
+  path.
+- The new tests ran on Windows 11 and on Linux (Ubuntu 24.04 under WSL2).
+  macOS was not run.
+
 ## 0.4.0, 2026-09-26
 
 The session store stays inside itself, and every program relay starts gets an
