@@ -47,10 +47,12 @@ def edit_set(ledger) -> list:
     return out
 
 
-def _default_runner(check: str, root: str):
+def _default_runner(check: str, root: str, guard: "str | None" = None):
+    """Run ``check`` in ``root``. PATH entries that reach ``guard`` (``root`` when it
+    is None) leave the shell's PATH, so a program planted there is never found."""
     from .child_env import shell_env
     proc = subprocess.run(check, shell=True, cwd=root, capture_output=True,
-                          text=True, timeout=_CHECK_TIMEOUT, env=shell_env(cwd=root))
+                          text=True, timeout=_CHECK_TIMEOUT, env=shell_env(cwd=guard or root))
     return proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
 
 
@@ -72,7 +74,9 @@ def _result(**kw) -> dict:
 def bisect_run(ledger, base_root: str, check: str, *, runner=None) -> dict:
     """Localize the first witnessed edit that breaks ``check``, replaying edits onto a
     clean copy of ``base_root``. ``runner(check, root) -> (ok, output)`` is injectable."""
-    runner = runner or _default_runner
+    # Each check runs in a fresh copy whose name no PATH entry can hold in advance.
+    # The project it copies is the folder a PATH entry can reach, so guard that one.
+    runner = runner or (lambda check, tree: _default_runner(check, tree, guard=base_root))
     edits = edit_set(ledger)
     n = len(edits)
     cache: dict = {}

@@ -4,7 +4,8 @@ Each was written to fail before its fix: the ``git`` that ``--auto-commit`` runs
 was still found by bare name, so a planted ``git.exe`` in the working folder ran
 instead; and a ledger file whose name is not a valid session id vanished from
 the listing without being counted. The short-name check holds without a change
-and stays as a regression test.
+and stays as a regression test. A later review added one more: each git call
+read every PATH entry again, which took about a second a call under WSL.
 """
 import ctypes
 import os
@@ -14,7 +15,8 @@ import subprocess
 import pytest
 from cli_stand_in import SYSTEM32, WINDOWS
 
-from relay.local_git import GitRepo
+from relay._vendor import safe_spawn
+from relay.local_git import GitRepo, commit_run
 from relay.local_session import SessionLedger
 from relay.local_tools import ToolGate
 from relay.mcp_paths import GuardedExecutor, ProtectedPaths
@@ -37,6 +39,27 @@ def test_a_git_planted_in_the_working_folder_never_runs(tmp_path, monkeypatch):
 def test_a_git_that_cannot_be_found_reads_as_no_repo(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     assert GitRepo(str(tmp_path)).is_repo() is False
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_commit_reads_path_once_for_all_its_git_calls(tmp_path, monkeypatch):
+    # Each lookup reads every PATH entry, which is slow under WSL, so the git calls
+    # of one commit share one lookup and one guarded environment.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, timeout=60)
+    for key, value in (("user.name", "relay test"), ("user.email", "relay-test@example.invalid"),
+                       ("commit.gpgsign", "false")):
+        subprocess.run(["git", "-C", str(repo), "config", key, value], check=True, timeout=60)
+    (repo / "note.txt").write_text("hello\n", encoding="utf-8")
+    reads = []
+    for name in ("resolve", "child_env"):
+        real = getattr(safe_spawn, name)
+        monkeypatch.setattr(safe_spawn, name,
+                            lambda *a, _real=real, _name=name, **k: reads.append(_name)
+                            or _real(*a, **k))
+    out = commit_run(str(repo), "add a note", "CHK", paths=["note.txt"])
+    assert out["committed"] is True, out
+    assert sorted(reads) == ["child_env", "resolve"], reads
 
 
 def test_a_ledger_with_an_invalid_name_is_counted_as_skipped(tmp_path):

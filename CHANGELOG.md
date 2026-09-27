@@ -21,15 +21,20 @@ the HarperZ9 Relay distribution.
 ### Security
 
 - An absolute `PATH` entry could reach a folder a child works in: the server's
-  folder, the root of a `run`, `test_cmd`, `check` or bisect check, or the
-  repository `--auto-commit` commits to. The entry could name the folder or a
-  folder below it, spell it another way, or lead there through a junction or
-  symlink. On Windows a quoted entry such as `"C:\proj"\bin` reached it too,
-  because cmd.exe drops the quotes. A program planted there ran in place of the
-  installed `claude`, `codex` or `git`, including the `--version` check that
-  `relay.doctor` starts under exec, and a shell child found it by bare name.
-  Affected: every release through 0.4.0. 0.4.0 closed the direct search of the
-  server's folder and left these routes open.
+  folder, the root of a `run`, `test_cmd` or `check`, the project a bisect
+  check copies, or the repository `--auto-commit` commits to. The entry could
+  name the folder or a folder below it, spell it another way, or lead there
+  through a junction or symlink. On Windows a quoted entry such as
+  `"C:\proj"\bin` reached it too, because cmd.exe drops the quotes. A program
+  planted there ran in place of the installed `claude`, `codex` or `git`,
+  including the `--version` check that `relay.doctor` starts under exec, and a
+  shell child found it by bare name. Affected: every release through 0.4.0.
+  0.4.0 closed the direct search of the server's folder and left these routes
+  open.
+- `git` itself ran with that `PATH`, so a program git starts by bare name ran
+  from the repository: a clean filter the repository selects in
+  `.gitattributes`, or `gpg` when commits are signed. Affected: every release
+  through 0.4.0.
 - On Windows a drive-relative name such as `C:claude` named a file in the
   current folder of drive C:. relay's own tiers use fixed names, so this needed
   a caller that builds a `CliBackend` with such a name. It is now refused with
@@ -42,12 +47,18 @@ the HarperZ9 Relay distribution.
   reaches the server's folder or the folder named for the child, from the
   lookup and from the child's `PATH`. Folders are compared by name and by file
   identity after links are resolved.
-- `run`, `test_cmd`, `check` and bisect checks hand their root to the helper,
-  and `--auto-commit` resolves `git` with the repository as the named folder.
+- `run`, `test_cmd` and `check` hand their root to the helper. A bisect check
+  runs in a fresh copy of the project, so it hands the helper the project it
+  copied.
+- `--auto-commit` resolves `git` with the repository as the named folder, and
+  starts it with a `PATH` guarded the same way. git keeps the rest of its
+  environment (`HOME`, `GNUPGHOME`, `SSH_AUTH_SOCK`, its `GIT_` variables). One
+  lookup serves every git call of a commit.
 - A command in `run`, `test_cmd` or `check` that found a program through a
   folder inside the root or the server's folder, such as a project's
   `.venv/bin` or `node_modules/.bin`, now needs that program's path
-  (`.venv/bin/pytest`). Starting relay from that virtual environment also
+  (`.venv/bin/pytest`). So does a git hook or filter that found a program that
+  way during `--auto-commit`. Starting relay from that virtual environment also
   works: the folder of the interpreter relay runs on always stays on `PATH`, and
   on Windows so do the Windows, System32 and SysWOW64 folders.
 - A child's `PATH` names each kept folder as its real folder, with links
