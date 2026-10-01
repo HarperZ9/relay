@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0, 2026-10-01
+
+- Adds default-off file-change and command-execution switches to MCPB setup. Strict boolean launch arguments retain the existing grants; native fixture workflows check both enabled permissions and refusals without a real model.
+- Fixes a Windows restart-read race: completed background runs no longer replace their durable record again after publishing the terminal state. Failed final persistence reports an error and preserves the request binding when that error record can be written.
+- Adds portable, Claude and Codex client manifests, a scoped skill, privacy guidance and troubleshooting.
+- Adds deterministic source plugin ZIPs and self-contained Windows x64 ZIP/MCPB candidates with runtime licenses, checksums and dependency provenance. Source ZIPs still require Python.
+- Requires an explicit absolute RELAY_MCP_ROOT binding. Ambient environment variables cannot grant write or execution access. Explicit --allow-write and --allow-exec launch flags preserve the existing permission model; exec implies write and is not an OS sandbox. Synthetic tests cover an approved bounded file write and denied execution. Native model-driven runs remain unverified and require a user-owned endpoint.
+- Adds clean, tag-bound release packaging for .0 versions. Linked inputs, untracked release payloads, state files and credential file types are refused. The release workflow attaches checked client packages alongside the product release.
+- Real Windows stdio checks cover identity, source/version parity, discovery and permission refusals without a model account. Installed-client compatibility, clean-OS compatibility, signing and marketplace admission remain open gates. No publisher backend, model, network listener or service is installed.
+
+Source version metadata is not release availability proof; release availability is established only by the accepted Git tag, uploaded GitHub Release assets, and matching hash readback. Do not publish or recommend the bare PyPI name `relay-agent`; it belongs to another project.
+
 ## 0.5.0, 2026-09-27
 
 A program planted in a project folder no longer runs through a `PATH` entry that
