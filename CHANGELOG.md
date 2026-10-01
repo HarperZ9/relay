@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0, unreleased
+## 0.6.0, 2026-10-01
 
 - Adds default-off file-change and command-execution switches to MCPB setup. Strict boolean launch arguments retain the existing grants; native fixture workflows check both enabled permissions and refusals without a real model.
 - Fixes a Windows restart-read race: completed background runs no longer replace their durable record again after publishing the terminal state. Failed final persistence reports an error and preserves the request binding when that error record can be written.
