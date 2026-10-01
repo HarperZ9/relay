@@ -1,0 +1,17 @@
+{
+  "author": {
+    "name": "Zain Dana Harper"
+  },
+  "description": "Relay local tools with explicit operator bindings.",
+  "license": "FSL-1.1-MIT",
+  "name": "relay-local",
+  "userConfig": {
+    "root": {
+      "description": "Absolute path to an existing project folder Relay may read. This does not grant write or execution permission.",
+      "required": true,
+      "title": "Relay project folder",
+      "type": "directory"
+    }
+  },
+  "version": "0.6.0"
+}

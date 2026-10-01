@@ -1,0 +1,14 @@
+{
+  "description": "Relay local tools with explicit operator bindings.",
+  "name": "relay-local",
+  "owner": {
+    "name": "Zain Dana Harper"
+  },
+  "plugins": [
+    {
+      "description": "Relay local tools with explicit operator bindings.",
+      "name": "relay-local",
+      "source": "./"
+    }
+  ]
+}

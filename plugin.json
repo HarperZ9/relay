@@ -1,0 +1,9 @@
+{
+  "author": {
+    "name": "Zain Dana Harper"
+  },
+  "description": "Relay local tools with explicit operator bindings.",
+  "license": "FSL-1.1-MIT",
+  "name": "relay-local",
+  "version": "0.6.0"
+}
