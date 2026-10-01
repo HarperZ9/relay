@@ -73,3 +73,31 @@ TOOLS = [
      "description": "Readiness diagnostic: identity plus the local model tiers configured (serve, ollama) and the tools exposed. Network-free; use local_agent_health to actually ping tiers.",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
+
+
+def _hints(title, *, read_only=True, destructive=False, idempotent=True, open_world=False):
+    return {"title": title, "readOnlyHint": read_only, "destructiveHint": destructive,
+            "idempotentHint": idempotent, "openWorldHint": open_world}
+
+
+# MCP tool annotations. A hint describes the tool to the client and grants
+# nothing; launch grants still decide whether a run may write or execute.
+# Runs state the worst case a granted run can reach: changed files and a model
+# endpoint the user configured.
+_RUN = _hints("Run a gated agent task", read_only=False, destructive=True,
+              idempotent=False, open_world=True)
+TOOL_ANNOTATIONS = {
+    "local_agent_health": _hints("Check model tiers", idempotent=False, open_world=True),
+    "local_agent_chat": _hints("Ask a configured model", idempotent=False, open_world=True),
+    "local_agent_run": _RUN,
+    "local_agent_start": {**_RUN, "title": "Start a gated agent task"},
+    "local_agent_status": _hints("Background run progress"),
+    "local_agent_result": _hints("Background run result"),
+    "local_agent_runs": _hints("List background runs"),
+    "local_agent_sessions": _hints("List saved sessions"),
+    "relay.status": _hints("Relay status"),
+    "relay.doctor": _hints("Relay readiness check"),
+}
+for _tool in TOOLS:
+    _tool["title"] = TOOL_ANNOTATIONS[_tool["name"]]["title"]
+    _tool["annotations"] = dict(TOOL_ANNOTATIONS[_tool["name"]])

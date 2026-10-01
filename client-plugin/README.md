@@ -1,5 +1,15 @@
 # Relay client package
 
+Relay connects your assistant to a local coding agent that works in a project folder you choose, using a model endpoint you configure. File writes and command execution stay off until you allow them.
+
+## Try it
+
+- Check which local model tiers Relay can reach.
+- Ask my local model to explain src/main.py.
+- Start a background run that lists the TODO comments in this project, then show its result.
+
+## Details
+
 Set RELAY_MCP_ROOT to an absolute existing project directory. The adapter pins this root and explicitly starts with write and exec disabled, ignoring ambient RELAY_ALLOW_WRITE and RELAY_ALLOW_EXEC. Explicit launch arguments control those grants. Exec implies write and is not confined to the launch directory; enable it only for an approved task. Relay model operations require your own configured endpoint and may incur your provider charges. Status and doctor do not require a model. A declared grant is not an OS sandbox.
 
 ## Install
