@@ -222,12 +222,13 @@ class RunRegistry:
                 run.result = result
             with run.persist_lock:
                 persisted = self._persist(run, state=DONE, finished=finished)
+                if not persisted:
+                    with self._lock:
+                        run.error = "final result persistence failed"
+                    self._persist(run, state=ERROR, finished=finished)
                 with self._lock:
                     run.finished = finished
-                    if persisted:
-                        run.state = DONE
-                    else:
-                        run.error, run.state = "final result persistence failed", ERROR
+                    run.state = DONE if persisted else ERROR
         except Exception as exc:  # a dead backend or a raising tool is witnessed, not lost
             finished = self._clock()
             with self._lock:
@@ -237,9 +238,8 @@ class RunRegistry:
                 with self._lock:
                     run.finished = finished
                     run.state = ERROR
-        finally:
-            with run.persist_lock:
-                self._persist(run)   # the finished run survives a restart, fetchable again
+        # Both paths persist before publishing their terminal state. Replacing
+        # the file again after DONE/ERROR races a Windows restart reader.
 
     def _get(self, run_id: str) -> _Run | None:
         with self._lock:

@@ -85,6 +85,13 @@ def manifests(version, native):
             manifest['user_config'] = {'local_path': {'type': 'directory' if TOOL == 'relay' else 'file',
                 'title': 'Launch root' if TOOL == 'relay' else 'Mneme state database',
                 'description': f'Explicit absolute local path for {binding}.', 'required': True}}
+        manifest['user_config']['write'] = {'type': 'boolean', 'title': 'Allow file changes',
+            'description': 'Let approved model runs request file changes inside the selected launch root.',
+            'default': False, 'required': False}
+        manifest['user_config']['exec'] = {'type': 'boolean', 'title': 'Allow command execution',
+            'description': 'Also enables file changes. Commands can reach paths outside the launch root with your operating-system permissions.',
+            'default': False, 'required': False}
+        mcp['args'] = ['--write=${user_config.write}', '--exec=${user_config.exec}']
         files['manifest.json'] = encoded(manifest)
     return files
 

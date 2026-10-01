@@ -61,6 +61,8 @@ def main(argv=None):
     if TOOL == 'relay':
         parser.add_argument('--allow-write', action='store_true')
         parser.add_argument('--allow-exec', action='store_true')
+        parser.add_argument('--write', choices=('true', 'false'), default='false')
+        parser.add_argument('--exec', choices=('true', 'false'), default='false')
     args = parser.parse_args(argv)
     try:
         if TOOL == 'mneme':
@@ -70,8 +72,8 @@ def main(argv=None):
             root = explicit_path(os.environ.get('RELAY_MCP_ROOT'), directory=True)
             from relay.local_mcp import serve
             from relay.mcp_grants import StartGrants
-            return serve(grants=StartGrants(allow_write=args.allow_write,
-                                           allow_exec=args.allow_exec, root=root))
+            return serve(grants=StartGrants(allow_write=args.allow_write or args.write == 'true',
+                                           allow_exec=args.allow_exec or args.exec == 'true', root=root))
         from plexus.mcp import serve
         return serve()
     except ValueError as exc:

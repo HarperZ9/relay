@@ -2,6 +2,8 @@
 
 ## 0.6.0, unreleased
 
+- Adds default-off file-change and command-execution switches to MCPB setup. Strict boolean launch arguments retain the existing grants; native fixture workflows check both enabled permissions and refusals without a real model.
+- Fixes a Windows restart-read race: completed background runs no longer replace their durable record again after publishing the terminal state. Failed final persistence reports an error and preserves the request binding when that error record can be written.
 - Adds portable, Claude and Codex client manifests, a scoped skill, privacy guidance and troubleshooting.
 - Adds deterministic source plugin ZIPs and self-contained Windows x64 ZIP/MCPB candidates with runtime licenses, checksums and dependency provenance. Source ZIPs still require Python.
 - Requires an explicit absolute RELAY_MCP_ROOT binding. Ambient environment variables cannot grant write or execution access. Explicit --allow-write and --allow-exec launch flags preserve the existing permission model; exec implies write and is not an OS sandbox. Synthetic tests cover an approved bounded file write and denied execution. Native model-driven runs remain unverified and require a user-owned endpoint.

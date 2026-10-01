@@ -91,7 +91,7 @@ def test_manifest_permissions_and_parity():
     native=json.loads(docs['manifest.json'])
     plugin=json.loads(docs['plugin.json'])
     assert native['version'] == plugin['version']
-    assert native['server']['mcp_config']['args'] == []
+    assert native['server']['mcp_config']['args'] == ['--write=${user_config.write}', '--exec=${user_config.exec}']
     assert 'annotations' not in str(docs)
 
 

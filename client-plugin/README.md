@@ -1,11 +1,13 @@
 # Relay client package
 
-Set RELAY_MCP_ROOT to an absolute existing project directory. The adapter pins this root and explicitly starts with write and exec disabled, ignoring ambient RELAY_ALLOW_WRITE and RELAY_ALLOW_EXEC. Only explicit --allow-write or --allow-exec launch flags widen those grants. Exec implies write and is not confined to the launch directory; enable it only for an approved task. Relay model operations require your own configured endpoint and may incur your provider charges. Status and doctor do not require a model. A declared grant is not an OS sandbox.
+Set RELAY_MCP_ROOT to an absolute existing project directory. The adapter pins this root and explicitly starts with write and exec disabled, ignoring ambient RELAY_ALLOW_WRITE and RELAY_ALLOW_EXEC. Explicit launch arguments control those grants. Exec implies write and is not confined to the launch directory; enable it only for an approved task. Relay model operations require your own configured endpoint and may incur your provider charges. Status and doctor do not require a model. A declared grant is not an OS sandbox.
 
 ## Install
 The source ZIP requires Python 3.11 or newer. Extract the entire archive, then point a local stdio MCP client at an absolute Python executable with arguments `-I -S -B server/serve.py` using the absolute script path. Set the binding above in the client environment. The source package is an advanced installation, not self-contained.
 
 The Windows x64 native ZIP includes Python and needs no separate Python or Node installation. Extract everything and use the absolute `server/relay-local.exe` path with no arguments. A client supporting binary MCPB extensions may open the matching MCPB; enter its required local binding. Both archives use identical executable bytes.
+
+MCPB setup includes **Allow file changes** and **Allow command execution**, both off by default. Command execution also grants writes and can reach paths outside the launch root. The host passes explicit `--write=true|false` and `--exec=true|false` arguments. Missing, malformed or unresolved values cannot enable a grant. Manual clients can still use `--allow-write` and `--allow-exec`. Each model run must request the granted operation; tool arguments cannot widen launch permissions. Restart the connection after changing setup.
 
 Portable plugin.json/mcp.json, Claude's .claude-plugin/plugin.json and .mcp.json, and Codex's .codex-plugin/plugin.json are generated from the same source version. The source manifests use python3; replace that command with an absolute trusted Python path if unavailable. No client configuration is modified automatically. ChatGPT or Claude cloud support and marketplace admission are not implied by local MCP compatibility.
 
