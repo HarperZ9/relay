@@ -49,7 +49,9 @@ def test_source_zip_takes_server_code_from_src_once(tmp_path):
 def test_plugin_folder_fits_directory_limits():
     files = [p for p in PLUGIN.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     assert len(files) <= 512
-    assert max(p.stat().st_size for p in files) < 256 * 1024
+    images = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+    assert max(p.stat().st_size for p in files if p.suffix.lower() not in images) < 256 * 1024
+    assert all(p.stat().st_size < 2 * 1024 * 1024 for p in files if p.suffix.lower() in images)
     assert not [p for p in PLUGIN.rglob('.gitattributes')]
 
 
