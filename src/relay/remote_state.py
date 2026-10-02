@@ -20,7 +20,7 @@ import os
 import pathlib
 from typing import Mapping
 
-DEFAULT_ENV_FILE = ".env"
+from .env_file import DEFAULT_ENV_FILE, env_file_path  # noqa: F401 (re-exported)
 
 # The keys whose values may leave this module. A public URL is the address you
 # hand the phone; the listen host, port, origin list and exec flag describe what
@@ -77,12 +77,6 @@ def load_dotenv(path: str) -> dict[str, str]:
         key, _, value = line.partition("=")
         values[key.strip()] = _value(value)
     return values
-
-
-def env_file_path(env: Mapping[str, str] | None = None) -> str:
-    """The file the remote entrypoint would read, RELAY_ENV_FILE or ``.env``."""
-    env = os.environ if env is None else env
-    return env.get("RELAY_ENV_FILE") or DEFAULT_ENV_FILE
 
 
 def resolved_env(env: Mapping[str, str] | None = None, env_file: str | None = None,

@@ -55,7 +55,7 @@ class ProtectedPaths:
 
 def protected_paths(env: Mapping[str, str]) -> ProtectedPaths:
     """The server's own paths, resolved now against the server's working directory."""
-    from .remote_state import env_file_path
+    from .env_file import env_file_path
     from .session_store import session_dir
     env_file = _canon(env_file_path(env))
     stores = (*(_canon(env[k]) for k in _STORE_KEYS if env.get(k)), _canon(session_dir(env)))
