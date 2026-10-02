@@ -46,8 +46,11 @@ def plugin_entries():
 
 
 def vendored_expected():
-    """{relative name: bytes} the plugin folder must carry under server/src/<tool>."""
-    return entries(ROOT / 'src' / TOOL)
+    """{relative name: bytes} the plugin folder must carry under server/src/<tool>:
+    only the modules the client entry point can load (see client_closure)."""
+    from client_closure import closure
+    keep = closure(ROOT / 'src', TOOL, ROOT / 'client-plugin/server/serve.py')
+    return {name: data for name, data in entries(ROOT / 'src' / TOOL).items() if name in keep}
 
 
 def sync_vendored():
@@ -246,7 +249,7 @@ def build(output, native=False, mode='dev'):
             raise ValueError('missing PyInstaller license')
         files['PYINSTALLER-LICENSE.txt'] = copying[0].read_bytes()
     else:
-        files.update({f'server/src/{TOOL}/{name}': data for name, data in source.items()})
+        files.update({f'server/src/{TOOL}/{name}': data for name, data in vendored_expected().items()})
     if any((ROOT / name).read_bytes() != data for name, data in inputs.items()):
         raise ValueError('source changed during build')
     files['QUALIFICATION.json'] = encoded(receipt)

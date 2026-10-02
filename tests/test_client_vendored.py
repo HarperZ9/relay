@@ -105,3 +105,43 @@ def test_missing_server_code_fails_with_one_clear_line(tmp_path):
     p = launch(plugin, project, [{'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}}])
     assert p.returncode == 1 and not p.stdout
     assert p.stderr.strip() == f'{TOOL}: the server code is missing from the plugin folder. Reinstall the plugin.'
+
+
+SECRET_NAMES = ('RELAY_OAUTH_CLIENT_SECRET', 'RELAY_REMOTE_TOKEN', 'RELAY_OAUTH_SIGNING_SECRET',
+                'RELAY_AUTHORIZE_PASSWORD')
+
+
+def test_vendored_code_names_no_remote_server_secret():
+    for name, data in entries(PLUGIN / VENDORED).items():
+        assert not [s for s in SECRET_NAMES if s.encode() in data], name
+    assert 'remote_state.py' not in vendored_expected() and 'remote_mcp.py' not in vendored_expected()
+
+
+def test_closure_follows_function_imports_and_skips_marked_ones(tmp_path):
+    from client_closure import SKIP_MARK, closure
+    pkg = tmp_path / 'src' / 'demo'
+    (pkg / 'sub').mkdir(parents=True)
+    for name, text in {'__init__.py': '', 'a.py': 'def f():\n    from .b import x\n',
+                       'b.py': 'x = 1\n', 'c.py': '', 'sub/__init__.py': '', 'sub/d.py': 'from .. import c\n',
+                       'e.py': f'def g():\n    from . import unused  {SKIP_MARK}\n', 'unused.py': ''}.items():
+        (pkg / name).write_text(text)
+    entry = tmp_path / 'serve.py'
+    entry.write_text('import os\nfrom demo.a import f\nfrom demo.sub import d\nfrom demo import e\n')
+    assert closure(tmp_path / 'src', 'demo', entry) == {
+        '__init__.py', 'a.py', 'b.py', 'c.py', 'e.py', 'sub/__init__.py', 'sub/d.py'}
+
+
+def test_plugin_folder_alone_answers_every_profile_path(tmp_path):
+    plugin, project = isolated_copy(tmp_path)
+    calls = [('relay.status', {}), ('relay.doctor', {}), ('local_agent_health', {}),
+             ('local_agent_health', {'online': True}), ('local_agent_sessions', {}),
+             ('local_agent_runs', {}), ('local_agent_chat', {'prompt': 'synthetic', 'backend': 'claude-plan'})]
+    p = launch(plugin, project, [{'jsonrpc': '2.0', 'id': i, 'method': 'tools/call',
+                                  'params': {'name': n, 'arguments': a}} for i, (n, a) in enumerate(calls)])
+    assert p.returncode == 0, p.stderr
+    rows = [json.loads(line) for line in p.stdout.splitlines()]
+    assert len(rows) == len(calls)
+    texts = [r['result']['content'][0]['text'] for r in rows]
+    assert not [t for t in texts if 'ModuleNotFoundError' in t or 'ImportError' in t]
+    assert all(not r['result'].get('isError') for r in rows[:-1]), texts
+    assert 'CLI_TIERS_OFF' in texts[-1]
