@@ -10,7 +10,8 @@
         "--exec=${user_config.exec}",
         "--api-provider=${user_config.api_provider}",
         "--api-base-url=${user_config.api_base_url}",
-        "--api-model=${user_config.api_model}"
+        "--api-model=${user_config.api_model}",
+        "--no-cli-tiers"
       ],
       "command": "python3",
       "env": {

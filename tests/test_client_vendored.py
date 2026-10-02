@@ -87,11 +87,15 @@ def isolated_copy(tmp_path):
 def test_plugin_folder_alone_starts_with_the_claude_launch_command(tmp_path):
     plugin, project = isolated_copy(tmp_path)
     p = launch(plugin, project, [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
-                                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}}])
+                                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}},
+                                 {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
+                                  'params': {'name': 'relay.doctor', 'arguments': {}}}])
     assert p.returncode == 0, p.stderr
     rows = [json.loads(line) for line in p.stdout.splitlines()]
     names = {t['name'] for t in rows[1]['result']['tools']}
     assert {'local_agent_run', 'relay.status', 'relay.doctor'} <= names
+    doctor = json.loads(rows[2]['result']['content'][0]['text'])
+    assert doctor['cli_tiers'] == 'off in this launch profile' and 'remote' not in doctor
     assert not list(plugin.rglob('*.pyc'))
 
 

@@ -146,7 +146,8 @@ def manifests(version, native):
               'description': DESCRIPTION,
               'author': {'name': 'Zain Dana Harper'}, 'license': 'FSL-1.1-MIT'}
     grant_args = ['--write=${user_config.write}', '--exec=${user_config.exec}']
-    claude_args = [a.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}') for a in args] + grant_args + HOSTED_ARGS
+    claude_args = ([a.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}') for a in args] + grant_args + HOSTED_ARGS
+                   + ['--no-cli-tiers'])
     claude_env = {'RELAY_MCP_ROOT': '${user_config.project_folder}', 'RELAY_API_KEY': '${user_config.api_key}'}
     claude_config = {'mcpServers': {TOOL: {'command': command.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}'),
                                            'args': claude_args, 'env': claude_env, 'type': 'stdio'}}}

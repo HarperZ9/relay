@@ -110,6 +110,7 @@ def main(argv=None):
         parser.add_argument('--api-provider', default='')
         parser.add_argument('--api-base-url', default='')
         parser.add_argument('--api-model', default='')
+        parser.add_argument('--no-cli-tiers', action='store_true')
     args = parser.parse_args(argv)
     try:
         if TOOL == 'mneme':
@@ -121,7 +122,8 @@ def main(argv=None):
             from relay.local_mcp import serve
             from relay.mcp_grants import StartGrants
             return serve(grants=StartGrants(allow_write=args.allow_write or args.write == 'true',
-                                           allow_exec=args.allow_exec or args.exec == 'true', root=root))
+                                           allow_exec=args.allow_exec or args.exec == 'true', root=root),
+                         cli_tiers=not args.no_cli_tiers)
         from plexus.mcp import serve
         return serve()
     except ValueError as exc:
