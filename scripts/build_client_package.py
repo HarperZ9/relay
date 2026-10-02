@@ -15,7 +15,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = 'relay'
-DESCRIPTION = 'Run a local coding agent in a project folder you choose, with a model endpoint you configure.'
+DESCRIPTION = ('Run a local coding agent in a project folder you choose, using a model server on your computer '
+               'or a hosted model API you configure.')
 
 
 def entries(root, extensions=frozenset({'.py', '.md', '.json'})):
@@ -63,6 +64,50 @@ def encoded(value):
     return (json.dumps(value, indent=2, sort_keys=True) + '\n').encode()
 
 
+SITE = 'https://harperz9.github.io'
+REPOSITORY = 'https://github.com/HarperZ9/relay'
+GRANTS = {'write': ('Allow file changes', 'Let approved model runs request file changes inside the selected folder.'),
+          'exec': ('Allow command execution', 'Also enables file changes. Commands can reach paths outside the selected folder '
+                   'with your operating-system permissions.')}
+HOSTED = {'api_provider': ('Hosted model provider (optional)', 'Leave empty to use only the model servers on this '
+                           'computer. To let calls that ask for online tiers use one hosted API, enter codex (OpenAI), '
+                           'claude (Anthropic), gemini, deepseek or glm.'),
+          'api_key': ('Hosted model API key (optional)', 'Key for the hosted provider above. Relay sends it only to that '
+                      "provider's API, or to the gateway URL below when one is set."),
+          'api_base_url': ('OpenAI-compatible gateway URL (optional)', 'Send hosted calls to this URL instead of the '
+                           "provider's own API, for example a model gateway you run."),
+          'api_model': ('Hosted model name (optional)', "Leave empty for Relay's default model for that provider.")}
+HOSTED_ARGS = ['--api-provider=${user_config.api_provider}', '--api-base-url=${user_config.api_base_url}',
+               '--api-model=${user_config.api_model}']
+
+
+def settings(root_title, root_text):
+    """Launch settings shared by the MCPB and the Claude plugin: the root, two
+    default-off grants and the optional hosted model."""
+    out = {'local_path': {'type': 'directory', 'title': root_title, 'description': root_text, 'required': True}}
+    out.update({key: {'type': 'boolean', 'title': title, 'description': text, 'default': False, 'required': False}
+                for key, (title, text) in GRANTS.items()})
+    out.update({key: {'type': 'string', 'title': title, 'description': text, 'default': '', 'required': False,
+                      **({'sensitive': True} if key == 'api_key' else {})}
+                for key, (title, text) in HOSTED.items()})
+    return out
+
+
+def listing(plugin):
+    """Claude manifest: the shared plugin fields plus the directory listing fields."""
+    claude = settings('Project folder', 'The folder Relay works in. Runs and file tools stay inside it.')
+    return {**plugin, 'displayName': 'Relay',
+            'keywords': ['coding-agent', 'local-models', 'ollama', 'agentic', 'permissions', 'verification', 'mcp'],
+            'homepage': SITE + '/plugins/relay/support.html', 'repository': REPOSITORY,
+            'documentationUrl': REPOSITORY + '/blob/main/client-plugin/README.md',
+            'supportUrl': SITE + '/plugins/relay/support.html',
+            'privacyPolicyUrl': SITE + '/plugins/relay/privacy.html',
+            'termsOfServiceUrl': SITE + '/plugins/relay/terms.html',
+            'icon': './.claude-plugin/icon.png',
+            'userConfig': {('project_folder' if key == 'local_path' else key): {k: v for k, v in spec.items()
+                           if not (k == 'required' and v is False)} for key, spec in claude.items()}}
+
+
 def manifests(version, native):
     executable = f'server/{TOOL}-local.exe'
     command = '${PLUGIN_ROOT}/' + executable if native else 'python3'
@@ -73,26 +118,21 @@ def manifests(version, native):
     plugin = {'name': TOOL + '-local', 'version': version,
               'description': DESCRIPTION,
               'author': {'name': 'Zain Dana Harper'}, 'license': 'FSL-1.1-MIT'}
-    files = {'plugin.json': encoded(plugin), '.claude-plugin/plugin.json': encoded(plugin),
+    grant_args = ['--write=${user_config.write}', '--exec=${user_config.exec}']
+    claude_args = [a.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}') for a in args] + grant_args + HOSTED_ARGS
+    claude_env = {'RELAY_MCP_ROOT': '${user_config.project_folder}', 'RELAY_API_KEY': '${user_config.api_key}'}
+    claude_config = {'mcpServers': {TOOL: {'command': command.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}'),
+                                           'args': claude_args, 'env': claude_env, 'type': 'stdio'}}}
+    files = {'plugin.json': encoded(plugin), '.claude-plugin/plugin.json': encoded(listing(plugin)),
              '.codex-plugin/plugin.json': encoded({**plugin, 'skills': './skills/', 'mcpServers': './mcp.json'}),
-             'mcp.json': encoded(config), '.mcp.json': encoded(config).replace(b'${PLUGIN_ROOT}', b'${CLAUDE_PLUGIN_ROOT}')}
+             'mcp.json': encoded(config), '.mcp.json': encoded(claude_config)}
     if native:
-        mcp = {'command': '${__dirname}/' + executable, 'args': [],
-               'env': {binding: '${user_config.local_path}'} if binding else {}}
+        mcp = {'command': '${__dirname}/' + executable, 'args': grant_args + HOSTED_ARGS,
+               'env': {binding: '${user_config.local_path}', 'RELAY_API_KEY': '${user_config.api_key}'}}
         manifest = {'manifest_version': '0.3', **plugin, 'display_name': TOOL.title() + ' Local',
                     'server': {'type': 'binary', 'entry_point': executable, 'mcp_config': mcp},
-                    'compatibility': {'platforms': ['win32']}}
-        if binding:
-            manifest['user_config'] = {'local_path': {'type': 'directory' if TOOL == 'relay' else 'file',
-                'title': 'Launch root' if TOOL == 'relay' else 'Mneme state database',
-                'description': f'Explicit absolute local path for {binding}.', 'required': True}}
-        manifest['user_config']['write'] = {'type': 'boolean', 'title': 'Allow file changes',
-            'description': 'Let approved model runs request file changes inside the selected launch root.',
-            'default': False, 'required': False}
-        manifest['user_config']['exec'] = {'type': 'boolean', 'title': 'Allow command execution',
-            'description': 'Also enables file changes. Commands can reach paths outside the launch root with your operating-system permissions.',
-            'default': False, 'required': False}
-        mcp['args'] = ['--write=${user_config.write}', '--exec=${user_config.exec}']
+                    'compatibility': {'platforms': ['win32']},
+                    'user_config': settings('Launch root', f'Explicit absolute local path for {binding}.')}
         files['manifest.json'] = encoded(manifest)
     return files
 
@@ -124,7 +164,7 @@ def build(output, native=False, mode='dev'):
     output = Path(output).absolute()
     if output.exists():
         raise FileExistsError('output must be a new directory')
-    files = entries(ROOT / 'client-plugin')
+    files = entries(ROOT / 'client-plugin', extensions={'.py', '.md', '.json', '.png'})
     source = entries(ROOT / 'src' / TOOL)
     inputs = {f'src/{TOOL}/{name}': data for name, data in source.items()}
     inputs.update({f'client-plugin/{name}': data for name, data in files.items()})

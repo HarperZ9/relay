@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+from urllib.parse import urlsplit
 
 TOOL = 'relay'
 if not getattr(sys, 'frozen', False):
@@ -24,6 +25,45 @@ def explicit_path(value, *, directory=False):
     if not directory and (not path.parent.is_dir() or path.is_dir()):
         raise ValueError('state must name a file in an existing directory')
     return str(path)
+
+
+HOSTED_KEY_ENV = 'RELAY_API_KEY'
+
+
+def unset(value):
+    """A host that leaves an optional setting unfilled passes its placeholder."""
+    return '' if value.startswith('${user_config.') else value.strip()
+
+
+def hosted_environment(provider, base_url, model):
+    """Clear ambient hosted-model keys, gateway URLs and model names, then set only
+    the provider the launch names. The key arrives in RELAY_API_KEY, never argv."""
+    from relay.endpoints import PROVIDERS
+    key = unset(os.environ.pop(HOSTED_KEY_ENV, ''))
+    provider, base_url, model = unset(provider), unset(base_url), unset(model)
+    for name, spec in PROVIDERS.items():
+        up = name.upper()
+        for var in (spec['key'], f'{up}_PROVIDER_BASE_URL', f'{up}_PROVIDER_KEY',
+                    f'{up}_CLOUD_BASE_URL', f'{up}_CLOUD_KEY', f'{up}_MODEL'):
+            os.environ.pop(var, None)
+    if not provider:
+        if base_url or model:
+            raise ValueError('a hosted model URL or name needs a hosted provider')
+        return
+    if provider not in PROVIDERS:
+        raise ValueError('hosted provider must be one of: ' + ', '.join(PROVIDERS))
+    up = provider.upper()
+    if base_url:
+        parts = urlsplit(base_url)
+        if parts.scheme not in ('http', 'https') or not parts.netloc:
+            raise ValueError('hosted model URL must be an http or https URL')
+        os.environ[f'{up}_PROVIDER_BASE_URL'] = base_url.rstrip('/')
+        if key:
+            os.environ[f'{up}_PROVIDER_KEY'] = key
+    elif key:
+        os.environ[PROVIDERS[provider]['key']] = key
+    if model:
+        os.environ[f'{up}_MODEL'] = model
 
 
 def mneme_serve(writable):
@@ -63,6 +103,9 @@ def main(argv=None):
         parser.add_argument('--allow-exec', action='store_true')
         parser.add_argument('--write', choices=('true', 'false'), default='false')
         parser.add_argument('--exec', choices=('true', 'false'), default='false')
+        parser.add_argument('--api-provider', default='')
+        parser.add_argument('--api-base-url', default='')
+        parser.add_argument('--api-model', default='')
     args = parser.parse_args(argv)
     try:
         if TOOL == 'mneme':
@@ -70,6 +113,7 @@ def main(argv=None):
             return mneme_serve(args.allow_memory_write)
         if TOOL == 'relay':
             root = explicit_path(os.environ.get('RELAY_MCP_ROOT'), directory=True)
+            hosted_environment(args.api_provider, args.api_base_url, args.api_model)
             from relay.local_mcp import serve
             from relay.mcp_grants import StartGrants
             return serve(grants=StartGrants(allow_write=args.allow_write or args.write == 'true',
