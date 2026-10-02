@@ -9,7 +9,11 @@ from urllib.parse import urlsplit
 
 TOOL = 'relay'
 if not getattr(sys, 'frozen', False):
-    sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
+    SOURCE = Path(__file__).resolve().parent / 'src'
+    if not (SOURCE / TOOL / 'local_mcp.py').is_file():
+        sys.stderr.write(f'{TOOL}: the server code is missing from the plugin folder. Reinstall the plugin.\n')
+        raise SystemExit(1)
+    sys.path.insert(0, str(SOURCE))
 
 
 def explicit_path(value, *, directory=False):

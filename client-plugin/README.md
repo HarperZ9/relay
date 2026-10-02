@@ -66,7 +66,7 @@ Relay writes nothing else. `local_agent_sessions` only reads sessions saved earl
 - `RELAY_CHILD_ENV`: extra variable names to pass to commands and CLIs. `RELAY_ALLOW_EXEC_CLI`: agent CLIs without a tested isolation profile that may start. `RELAY_CLAUDE_CLI` and `RELAY_CODEX_CLI`: absolute paths to those CLIs. `PATH`, `PATHEXT` and `SystemRoot`: used to find programs.
 - Passed on to programs Relay starts, and not otherwise used: the system variables a program needs, such as `PATH`, `TEMP`, `HOME`, `USERPROFILE`, `APPDATA` and `LANG`; toolchain variables such as `VIRTUAL_ENV`, `JAVA_HOME` and `CARGO_HOME` for shell commands; `CLAUDE_CONFIG_DIR` for the `claude` CLI and `CODEX_HOME` for the `codex` CLI. API keys are not passed on unless `RELAY_CHILD_ENV` names them.
 
-The only credential the plugin uses is the API key setting. It reads no key from your computer.
+Relay itself uses one credential: the API key setting. It reads no API key from your computer's environment. When command execution is on and a call passes `online: true`, the `claude` and `codex` programs it starts sign in with the accounts already saved on your computer.
 
 ## Data and network
 
@@ -82,7 +82,7 @@ Tool results go to the connected client, and that client's model provider handle
 
 ## Other clients
 
-The source ZIP requires Python 3.11 or newer. Extract the entire archive, then point a local stdio MCP client at an absolute Python executable with arguments `-I -S -B /absolute/path/server/serve.py`. Set `RELAY_MCP_ROOT` to an absolute existing project directory in the client's server environment. The source ZIP carries its own copy of Relay under `server/src`.
+The source ZIP requires Python 3.11 or newer. Extract the entire archive, then point a local stdio MCP client at an absolute Python executable with arguments `-I -S -B /absolute/path/server/serve.py`. Set `RELAY_MCP_ROOT` to an absolute existing project directory in the client's server environment. The plugin folder and the source ZIP carry their own copy of Relay under `server/src`, so the server never loads code from outside the folder it was installed in. If that copy is missing, the server prints one line asking you to reinstall the plugin and exits.
 
 The Windows x64 native ZIP includes Python and needs no separate Python or Node installation. Extract everything and use the absolute `server/relay-local.exe` path. A client supporting binary MCPB extensions may open the matching MCPB, which offers the same settings as Claude Code. Both archives use identical executable bytes.
 
