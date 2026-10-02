@@ -91,8 +91,68 @@ def test_manifest_permissions_and_parity():
     native=json.loads(docs['manifest.json'])
     plugin=json.loads(docs['plugin.json'])
     assert native['version'] == plugin['version']
-    assert native['server']['mcp_config']['args'] == ['--write=${user_config.write}', '--exec=${user_config.exec}']
+    assert native['server']['mcp_config']['args'] == ['--write=${user_config.write}', '--exec=${user_config.exec}',
+        '--api-provider=${user_config.api_provider}', '--api-base-url=${user_config.api_base_url}',
+        '--api-model=${user_config.api_model}']
+    assert native['server']['mcp_config']['env'] == {'RELAY_MCP_ROOT': '${user_config.local_path}',
+                                                     'RELAY_API_KEY': '${user_config.api_key}'}
+    assert native['user_config']['api_key']['sensitive'] is True
     assert 'annotations' not in str(docs)
+
+
+def test_claude_manifest_carries_directory_listing_and_prompts_for_bindings():
+    docs = manifests(qualify('dev')[0], False)
+    claude = json.loads(docs['.claude-plugin/plugin.json'])
+    portable = json.loads(docs['plugin.json'])
+    for key in ('homepage', 'documentationUrl', 'supportUrl', 'privacyPolicyUrl', 'termsOfServiceUrl'):
+        assert claude[key].startswith('https://')
+    assert claude['repository'] == 'https://github.com/HarperZ9/relay'
+    assert claude['displayName'] == 'Relay' and 5 <= len(claude['keywords']) <= 8
+    assert all(k == k.lower() for k in claude['keywords'])
+    assert claude['icon'] == './.claude-plugin/icon.png'
+    config = claude['userConfig']
+    assert set(config) == {'project_folder', 'write', 'exec', 'api_provider', 'api_key', 'api_base_url', 'api_model'}
+    assert config['project_folder']['type'] == 'directory' and config['project_folder']['required'] is True
+    assert config['write']['default'] is False and config['exec']['default'] is False
+    assert config['api_key']['sensitive'] is True
+    assert [k for k, v in config.items() if v.get('sensitive')] == ['api_key']
+    allowed = {'type', 'title', 'description', 'required', 'default', 'sensitive'}
+    assert all(set(v) <= allowed for v in config.values())
+    native = json.loads(manifests(qualify('dev')[0], True)['manifest.json'])['user_config']
+    for key in ('write', 'exec', 'api_provider', 'api_key', 'api_base_url', 'api_model'):
+        assert config[key]['default'] == native[key]['default'] and config[key]['type'] == native[key]['type']
+    for key in ('name', 'version', 'license', 'author', 'description'):
+        assert claude[key] == portable[key]
+    assert 'userConfig' not in portable and 'icon' not in portable
+    server = json.loads(docs['.mcp.json'])['mcpServers'][TOOL]
+    assert server['command'] == 'python3'
+    assert server['args'][:4] == ['-I', '-S', '-B', '${CLAUDE_PLUGIN_ROOT}/server/serve.py']
+    assert server['env'] == {'RELAY_MCP_ROOT': '${user_config.project_folder}',
+                             'RELAY_API_KEY': '${user_config.api_key}'}
+    assert not any('api_key' in a for a in server['args'])
+    placeholders = [a for a in [*server['args'], *server['env'].values()] if '${' in a]
+    assert all('${user_config.' in a or '${CLAUDE_PLUGIN_ROOT}' in a for a in placeholders)
+    assert json.loads(docs['mcp.json'])['mcpServers'][TOOL]['env'] == {'RELAY_MCP_ROOT': '${RELAY_MCP_ROOT}'}
+
+
+def test_committed_icon_is_a_square_png_the_directory_accepts():
+    data = (ROOT / 'client-plugin/.claude-plugin/icon.png').read_bytes()
+    assert data[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10]) and data[12:16] == b'IHDR'
+    width, height = int.from_bytes(data[16:20], 'big'), int.from_bytes(data[20:24], 'big')
+    assert width == height and 512 <= width <= 2048 and len(data) < 2 * 1024 * 1024
+
+
+def test_committed_source_manifests_match_generated_contract():
+    for name, expected in manifests(qualify('dev')[0], False).items():
+        assert json.loads((ROOT / 'client-plugin' / name).read_text()) == json.loads(expected), name
+    assert not (ROOT / 'client-plugin/CLAUDE.md').exists()
+
+
+def test_source_zip_carries_icon_and_server_source(tmp_path):
+    with zipfile.ZipFile(build(tmp_path / 'output')[0]) as z:
+        names = set(z.namelist())
+    assert '.claude-plugin/icon.png' in names
+    assert f'server/src/{TOOL}/local_mcp.py' in names and 'server/serve.py' in names
 
 
 @pytest.mark.skipif(TOOL != 'mneme', reason='Mneme scope')
@@ -172,3 +232,16 @@ def test_native_builder_pins_reproducibility_environment(tmp_path,monkeypatch):
     monkeypatch.setattr(package.subprocess,'check_output',lambda *a,**k:'1234567890\n')
     with pytest.raises(StopBeforeBuild):
         package.build(tmp_path/'native-build',native=True)
+
+
+def test_readme_and_privacy_carry_the_same_disclosure():
+    def section(name):
+        text = (ROOT / 'client-plugin' / name).read_text(encoding='utf-8')
+        start = text.index('## What this plugin runs and handles')
+        return text[start:text.index('\n## ', start + 1)].strip()
+    readme = section('README.md')
+    assert readme == section('PRIVACY.md')
+    server = json.loads(manifests(qualify('dev')[0], False)['.mcp.json'])['mcpServers'][TOOL]
+    assert ' '.join([server['command'], *server['args']]) in readme
+    for name in [*server['env'], 'OPENAI_API_KEY', 'RELAY_RUN_ROOT', 'RELAY_SESSION_DIR', 'RELAY_CHILD_ENV']:
+        assert f'`{name}`' in readme
