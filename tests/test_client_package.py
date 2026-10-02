@@ -130,6 +130,8 @@ def test_claude_manifest_carries_directory_listing_and_prompts_for_bindings():
     assert server['env'] == {'RELAY_MCP_ROOT': '${user_config.project_folder}',
                              'RELAY_API_KEY': '${user_config.api_key}'}
     assert not any('api_key' in a for a in server['args'])
+    assert server['args'][-1] == '--no-cli-tiers'
+    assert '--no-cli-tiers' not in json.loads(docs['mcp.json'])['mcpServers'][TOOL]['args']
     placeholders = [a for a in [*server['args'], *server['env'].values()] if '${' in a]
     assert all('${user_config.' in a or '${CLAUDE_PLUGIN_ROOT}' in a for a in placeholders)
     assert json.loads(docs['mcp.json'])['mcpServers'][TOOL]['env'] == {'RELAY_MCP_ROOT': '${RELAY_MCP_ROOT}'}

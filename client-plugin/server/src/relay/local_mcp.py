@@ -32,6 +32,7 @@ from .mcp_request import (
     as_bool as _as_bool,
     as_int as _as_int,
     as_str as _as_str,
+    cli_tier_profiles,
     refuse_cli_tier,
     request_binding,
     run_projection,
@@ -49,6 +50,7 @@ RUNS = RunRegistry(run_root=os.environ.get("RELAY_RUN_ROOT") or None)
 
 # The most any run may do, fixed at launch by serve() or a launcher. Off until then.
 _GRANTS = StartGrants()
+_CLI_TIERS = True  # False: no claude/codex CLI is built, probed or started (see serve)
 
 
 def configure(grants: StartGrants) -> None:
@@ -72,7 +74,8 @@ def _backends(args: dict, exec_ok: bool) -> list:
     bs = available_backends(model=_as_str(args, "model", ""))
     if _as_bool(args, "online"):
         from .endpoints import CliBackend, build_endpoints
-        online = build_endpoints()
+        online = build_endpoints(modes=("plan", "api", "provider", "cloud") if _CLI_TIERS
+                                 else ("api", "provider", "cloud"))
         if not exec_ok:
             # codex exec / claude -p run an agent with its own shell.
             online = [b for b in online if not isinstance(b, CliBackend)]
@@ -88,6 +91,9 @@ def _agent(args: dict, request_binding: dict | None = None) -> LocalAgent:
     else:
         binding, exec_ok = request_binding, request_binding["allow_exec"]
     prefer = binding["backend"]
+    if not _CLI_TIERS and prefer in cli_tier_profiles():
+        raise MCPInputError("CLI_TIERS_OFF", f"backend {prefer!r} is an agent CLI tier, which this "
+                            "launch profile leaves out", request_binding=request_binding)
     refuse_cli_tier(prefer, exec_ok, request_binding)
     bs = _backends(args, exec_ok)
     if prefer != "auto" and prefer not in {getattr(b, "name", "") for b in bs}:
@@ -168,17 +174,22 @@ def _call(params: dict) -> dict:
                                     "letters, digits, '.', '_' or '-' (at most 128)")
             return _text(get_session(sdir, sid) if sid else list_sessions(sdir))
         if name in ("relay.status", "relay.doctor"):
+            grants = {**_GRANTS.as_dict(), "root": launch_root(_GRANTS)}
+            grants["agent_cli_tiers"] = grants["agent_cli_tiers"] and _CLI_TIERS
             info = {"ok": True, "server": "relay", "version": __version__, "protocol": PROTOCOL,
-                    "grants": {**_GRANTS.as_dict(), "root": launch_root(_GRANTS)}}
+                    "grants": grants}
             if name == "relay.doctor":
                 from .cli_tiers import cli_tier_rows
                 info["local_tiers"] = [type(b).__name__ for b in available_backends()]
                 info["tools"] = [t["name"] for t in TOOLS]
                 # The phone-facing surface is a separate process. Values are
                 # withheld, and a .env in this server's folder is read only when
-                # RELAY_ENV_FILE names it (see remote_state).
-                info["remote"] = remote_state(read_default=False)
-                info["cli_tiers"] = cli_tier_rows(_call_exec_ok())
+                # RELAY_ENV_FILE names it (see remote_state). Without CLI tiers, neither.
+                if _CLI_TIERS:
+                    info["remote"] = remote_state(read_default=False)
+                    info["cli_tiers"] = cli_tier_rows(_call_exec_ok())
+                else:
+                    info["cli_tiers"] = "off in this launch profile"
             return _text(info)
         return {"content": [{"type": "text", "text": f"unknown tool {name!r}"}], "isError": True}
     except MCPInputError as e:
@@ -233,10 +244,13 @@ def handle(req: dict):
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
 
-def serve(stdin=None, stdout=None, grants: StartGrants | None = None) -> int:
+def serve(stdin=None, stdout=None, grants: StartGrants | None = None, cli_tiers=True) -> int:
     """Serve stdio JSON-RPC. ``grants`` come from the launcher; with none passed,
     RELAY_ALLOW_WRITE / RELAY_ALLOW_EXEC / RELAY_MCP_ROOT decide. Write and exec
-    default to off, and the root to the working directory."""
+    default to off, and the root to the working directory. ``cli_tiers=False`` (the
+    directory plugin) leaves the agent-CLI tiers out, so no saved CLI sign-in is used."""
+    global _CLI_TIERS
+    _CLI_TIERS = cli_tiers
     try:
         configure(grants if grants is not None else
                   grants_from_launch(allow_write=False, allow_exec=False, env=os.environ))
