@@ -7,6 +7,7 @@
 - The Claude manifest passes `--no-cli-tiers`, so the plugin never builds a claude or codex CLI backend and uses one credential, the API key setting. It adds the plugin directory listing fields and a 1024 px icon, and takes the project folder, the write and exec grants and an optional hosted model from `userConfig`. The client adapter clears hosted-model keys, gateway URLs and model names from its starting environment and sets only the provider the launch names.
 - Every MCP tool carries a title, `readOnlyHint` and `destructiveHint`. README and PRIVACY list the launch command, every network destination, every file written and every environment variable the server reads.
 - Release checksum files are written with LF line endings on every OS, and the release workflow refuses a checksum file that contains a CR byte.
+- The native release gate sends its loopback fixture through the hosted-model launch settings a user fills in. The first 0.7.0 tag failed this gate before anything was published: the launcher now clears ambient gateway URLs, and the gate still set the fixture gateway in the environment, so the granted write found no backend. The same gate now runs through `python serve.py` in ordinary CI on every platform, so a launcher change that breaks it fails before a release.
 
 Source version metadata is not release availability proof; release availability is established only by the accepted Git tag, uploaded GitHub Release assets, and matching hash readback. Do not publish or recommend the bare PyPI name `relay-agent`; it belongs to another project.
 
