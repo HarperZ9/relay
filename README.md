@@ -414,6 +414,6 @@ The long form of this belief: [The Unbundling](https://github.com/HarperZ9/flywh
 
 Built by **[Zain Dana Harper](https://harperz9.github.io)** in Seattle: evidence-first tools that leave a re-checkable artifact behind. The full workbench is at [Project Telos](https://harperz9.github.io).
 
-## 0.6.0 local client distribution candidate
+## Local client packages
 
-The additional [client package](client-plugin/README.md) includes portable plugin metadata and a Windows x64 MCPB/ZIP build. The source version is 0.6.0; these client packages remain unpublished candidates. Existing release installation commands above retain their released version. Native packages carry their Python runtime. No publisher backend is required.
+The additional [client package](client-plugin/README.md) includes portable plugin metadata and a Windows x64 MCPB/ZIP build. Version 0.6.0 first attached these packages to its GitHub release, and a published GitHub release for each later version carries packages built from that tag. Native packages carry their Python runtime. No publisher backend is required.
