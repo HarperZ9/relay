@@ -61,8 +61,11 @@ def check(executable, version):
         from build_client_package import manifests
         manifest = json.loads(manifests(version, True)['manifest.json'])
         setup = check_setup(executable, manifest, TOOL, env, temp)
-        setup_args = {key: expanded_args(manifest, **{key: True})
-                      for key in (['memory_write'] if TOOL == 'mneme' else ['write', 'exec'])}
+        keys = ['memory_write'] if TOOL == 'mneme' else ['write', 'exec']
+        # The fixture gateway goes in through the same hosted settings a user fills in.
+        hosted = (lambda url: {'api_provider': 'codex', 'api_base_url': url, 'api_model': 'synthetic-fixture'}) \
+            if TOOL == 'relay' else (lambda url: {})
+        setup_args = lambda url: {key: expanded_args(manifest, **{key: True}, **hosted(url)) for key in keys}
         workflow = check_workflow(executable, Path(temp), env, setup_args)
     return {'mcpb_setup':setup,'workflow':workflow,'status':'PASS','version':version,'executable_sha256':hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
             'scope':'identity, tool list, unknown tool, default permission refusal',
