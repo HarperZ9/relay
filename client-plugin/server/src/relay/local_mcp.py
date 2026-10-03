@@ -40,7 +40,7 @@ from .mcp_request import (
 from .mcp_schema import TOOLS
 
 PROTOCOL = "2025-06-18"
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 # Background runs, so a phone can start a long agentic task and poll it instead of
 # holding one blocking HTTP request open across a flaky mobile network. With

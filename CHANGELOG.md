@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0, 2026-10-03
+
+- Opt-in local-first cascade: `relay.cascade.Cascade` asks a local classifier a yes-or-no question first and calls your model endpoint only when the classifier abstains. Each answer goes to the session ledger with who answered it. The bundled "is this test failure flaky?" classifier missed both bars set before the run. On 81 held-out failure tails it decided 23% of questions, under the 50% bar, at 0.89 accuracy, under the 0.95 bar. The default threshold, 1.0, therefore sends nearly every question to the endpoint. A shuffled-label control reached 0.79. A substring defect found after the first run is fixed, and both runs are recorded. Details, the bar and the limits: `docs/CASCADE.md`.
+- The Claude plugin folder now carries the server code at `client-plugin/server/src/relay/`, limited to the modules the plugin launch can import. `python scripts/build_client_package.py --sync-vendored` rewrites that copy from `src/`, and a test fails when it drifts. The remote server's modules, which name its OAuth secrets, are no longer shipped in the folder or the source ZIP.
+- The Claude manifest passes `--no-cli-tiers`, so the plugin never builds a claude or codex CLI backend and uses one credential, the API key setting. It adds the plugin directory listing fields and a 1024 px icon, and takes the project folder, the write and exec grants and an optional hosted model from `userConfig`. The client adapter clears hosted-model keys, gateway URLs and model names from its starting environment and sets only the provider the launch names.
+- Every MCP tool carries a title, `readOnlyHint` and `destructiveHint`. README and PRIVACY list the launch command, every network destination, every file written and every environment variable the server reads.
+- Release checksum files are written with LF line endings on every OS, and the release workflow refuses a checksum file that contains a CR byte.
+
+Source version metadata is not release availability proof; release availability is established only by the accepted Git tag, uploaded GitHub Release assets, and matching hash readback. Do not publish or recommend the bare PyPI name `relay-agent`; it belongs to another project.
+
 ## 0.6.0, 2026-10-01
 
 - Adds default-off file-change and command-execution switches to MCPB setup. Strict boolean launch arguments retain the existing grants; native fixture workflows check both enabled permissions and refusals without a real model.
