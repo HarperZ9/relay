@@ -395,6 +395,8 @@ agent = LocalAgent(backends=available_backends() + build_endpoints())  # local +
 print(agent.send("hi")["content"][0]["text"])
 ```
 
+`relay.cascade` asks a local classifier a yes-or-no question first and calls your endpoint only when it abstains, writing each answer to the session ledger. The bundled "is this test failure flaky?" classifier missed its measured bar, so the default sends nearly every question to the endpoint; see [docs/CASCADE.md](docs/CASCADE.md).
+
 ## License
 
 Relay is fair-source: open to read, run, and build on, with commercial use reserved so the project can fund its own development. See [LICENSE](LICENSE).
