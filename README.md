@@ -1,8 +1,21 @@
-<p align="center"><img src="docs/art/relay-header.svg" alt="relay: accountable coding agent. Every run leaves a certificate a stranger can check offline." width="100%"></p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/HarperZ9/relay/main/docs/art/hero-dark.svg">
+  <img src="https://raw.githubusercontent.com/HarperZ9/relay/main/docs/art/hero-light.svg" alt="relay: Accountable coding agent that runs on any model endpoint. Bundles of fine lines carry the work through 4 stations, route, agent, failover and certify, along a sweeping path into a bright core." width="100%">
+</picture>
 
 # relay
 
-**A zero-dependency, accountable coding agent that runs on any model endpoint.**
+Accountable coding agent that runs on any model endpoint.
+
+```
+python -m pip install flywheel-relay
+```
+
+[![version: 0.7.0](https://img.shields.io/badge/version-0.7.0-e6e1d6?style=flat-square&labelColor=1a1712)](https://pypi.org/project/flywheel-relay/)
+[![CI](https://github.com/HarperZ9/relay/actions/workflows/ci.yml/badge.svg)](https://github.com/HarperZ9/relay/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-FSL--1.1--MIT-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/relay/blob/main/LICENSE)
+![python 3.11+](https://img.shields.io/badge/python-3.11%2B-e6e1d6?style=flat-square&labelColor=1a1712)
+
 Local models when you're offline, your subscription or API when you need more,
 automatic failover across all of them, and every run is a re-verifiable,
 git-anchored trajectory. Stdlib only.
