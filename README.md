@@ -40,6 +40,12 @@ commit or a GitHub Release wheel, where a missing checksum entry or a hash
 mismatch stops before `pip install`. See
 [`docs/GITHUB-ONLY-INSTALL.md`](docs/GITHUB-ONLY-INSTALL.md).
 
+## See it work, step by step
+
+The [animated explainer](https://harperz9.github.io/repo-explainers/relay.html)
+walks through hash-anchored edits on a four-line file, the default-deny tool gate, the hash-chained run ledger and the prompt-injection probe. Every value on it is output from this repository. Its
+source is [docs/explainer/index.html](docs/explainer/index.html).
+
 ## Reaches every endpoint (with your own credentials)
 
 <p align="center"><img src="docs/art/endpoint-ladder.svg" alt="The endpoint ladder from prompt to cloud, with rungs tried in order and free tiers first." width="100%"></p>
