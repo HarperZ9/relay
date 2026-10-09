@@ -46,6 +46,61 @@ The [animated explainer](https://harperz9.github.io/repo-explainers/relay.html)
 walks through hash-anchored edits on a four-line file, the default-deny tool gate, the hash-chained run ledger and the prompt-injection probe. Every value on it is output from this repository. Its
 source is [docs/explainer/index.html](docs/explainer/index.html).
 
+## Watch
+
+[![Models do what training pays for: a narrated film, 2 min](https://harperz9.github.io/media/explainers/incentives/poster.jpg)](https://harperz9.github.io/explainers.html#incentives-h)
+
+**[Models do what training pays for](https://harperz9.github.io/explainers.html#incentives-h)** (2 min, narrated, captioned). Relay accepts a run only when your own check passes, which is the guard this film argues for. The film page carries the transcript, the sources and recall questions.
+
+Video walkthrough: coming with the next release.
+
+## Walkthrough
+
+Install it, run it once, then use the main feature. Each command below is real, and so is its output.
+
+1. **Install.** Install from PyPI. Python 3.11 or newer.
+
+   ```text
+   $ python -m pip install flywheel-relay
+   ```
+
+2. **First run: probe the boundary.** Before relay touches a model, run its built-in injection probes against the permission boundary. All six were contained.
+
+   ```text
+   $ relay --probe-injection
+     "contained": 6,
+     "total": 6,
+     "receipt": "1405769b874ca5d7"
+   ```
+
+3. **Read with line anchors.** The agent reads a file with a short hash on each line, so a later edit can name exactly the line it saw.
+
+   ```text
+   read_file {"path": "pager.py", "hashed": true}
+   b76150a4|def paginate(items, page, size):
+   ba6dfa08|    start = page * size
+   6627593c|    end = start + size - 1
+   a5dfd4fd|    return items[start:end]
+   ```
+
+4. **Edit by anchor.** An edit names the anchor it read. If the file changed since, the anchor no longer matches and the edit is refused.
+
+   ```text
+   edit_lines {"path": "pager.py", "at": "6627593c", "new": "    end = start + size"}
+   edited pager.py (replace 6627593c)
+
+   def paginate(items, page, size):
+       start = page * size
+       end = start + size
+       return items[start:end]
+   ```
+
+5. **Run a task, accepted only by your check.** Point relay at a model and a repository. Writes need `--allow-write`, and the run counts as done only when your check passes.
+
+   ```text
+   $ relay --agent "fix the off-by-one in paginate()" --root . --allow-write --check "pytest -q"
+   ```
+
 ## Reaches every endpoint (with your own credentials)
 
 <p align="center"><img src="docs/art/endpoint-ladder.svg" alt="The endpoint ladder from prompt to cloud, with rungs tried in order and free tiers first." width="100%"></p>
