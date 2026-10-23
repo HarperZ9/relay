@@ -21,9 +21,8 @@ The relay agent on PC is Flywheel's **Chat → Agent mode**:
    (writes/execs are one-use grants, every run keeps its receipt).
 
 Optional: on the **Lanes** view, find `relay` and click **Probe now** to confirm
-`relay.status` / `relay.doctor` answer (the lane is live). The desktop is not an
-MCP client, so it does not consume the `/mcp` endpoint — that endpoint is the
-server your **phone** connects to.
+`relay.status` / `relay.doctor` answer (the lane is live). The desktop talks to
+relay through its local gateway. The `/mcp` endpoint is for your **phone**.
 
 ---
 
@@ -31,9 +30,9 @@ server your **phone** connects to.
 
 ### Check the blockers first
 
-- **Plan:** any Claude plan works (Free allows one custom connector). A new
-  connector **cannot be added from the phone app** — you add it once on
-  **claude.ai (web) or Claude Desktop**, then it appears on your phone.
+- **Plan:** any Claude plan works (Free allows one custom connector). Add the
+  connector once on **claude.ai (web) or Claude Desktop**; it then appears in the
+  phone app.
 - **CGNAT / port-forward / cert:** all of this disappears on the **recommended
   Cloudflare Tunnel path below** — the tunnel is outbound-only, so no public IP,
   no port-forward, and no CGNAT check are needed, and Cloudflare provides the
@@ -46,9 +45,8 @@ server your **phone** connects to.
 ### Recommended: Cloudflare Tunnel (no CGNAT, no port-forward, no cert)
 
 Cloudflare's agentic networking gives relay a public HTTPS hostname through an
-**outbound-only** tunnel, so nothing about your home network matters — no public
-IP, no port-forward, no DDNS, no own cert. This is the easiest path and the one to
-use unless you have a reason not to.
+**outbound-only** tunnel. Your PC dials out to Cloudflare, Cloudflare serves the
+certificate, and your router keeps its current settings. This is the easiest path.
 
 1. Install **cloudflared** and a Cloudflare account (a free plan with one domain on
    Cloudflare is enough): the
@@ -76,8 +74,8 @@ URL. Verify from mobile data with `python scripts/check_remote.py https://relay.
 
 ### Alternative: a public name and cert on your own network
 
-Use this only if you are not using the Cloudflare Tunnel above. It needs a public
-IPv4 (no CGNAT) and your own cert.
+This path replaces the Cloudflare Tunnel above. It needs a public IPv4 address
+outside `100.64.0.0/10` and a certificate you issue yourself.
 
 - **Static LAN IP** for the PC (DHCP reservation on the router).
 - **DDNS name:** create one at DuckDNS / No-IP / Cloudflare and install its
@@ -87,7 +85,7 @@ IPv4 (no CGNAT) and your own cert.
   Firewall.
 - **TLS cert** with [win-acme](https://www.win-acme.com) (run elevated):
   - HTTP-01 (needs port 80): `wacs.exe --target manual --host <ddns-name> --validation selfhosting --store pemfiles --pemfilespath C:\certs`
-  - DNS-01 (Cloudflare domain, no port 80): `wacs.exe --target manual --host <name> --validation cloudflare --cloudflareapitoken <token> --store pemfiles --pemfilespath C:\certs`
+  - DNS-01 (Cloudflare domain, port 80 stays closed): `wacs.exe --target manual --host <name> --validation cloudflare --cloudflareapitoken <token> --store pemfiles --pemfilespath C:\certs`
   - Point `RELAY_TLS_CERT` / `RELAY_TLS_KEY` at the actual PEM filenames win-acme
     writes to `C:\certs`. win-acme installs its own 90-day renewal task; the
     launcher below restarts relay so the renewed cert is picked up.
@@ -102,15 +100,15 @@ IPv4 (no CGNAT) and your own cert.
 2. Start it: **tunnel** →
    `powershell -ExecutionPolicy Bypass -File scripts\serve_cloudflared.ps1 -Tunnel relay`;
    **direct** → `powershell -ExecutionPolicy Bypass -File scripts\serve_remote.ps1`.
-3. **From mobile data (not home wifi)**, verify it is reachable:
-   `python scripts/check_remote.py https://<your-host>` — it must PASS (valid cert,
-   metadata, `/mcp` answering) before you touch the connector dialog.
+3. **From mobile data**, with home wifi switched off, check that it is reachable:
+   `python scripts/check_remote.py https://<your-host>`. Move on to the connector
+   dialog once it prints PASS (valid cert, metadata, `/mcp` answering).
 
 ### 3. Add the connector (on claude.ai web or Claude Desktop)
 
 1. **Settings → Connectors → Add custom connector.**
-2. **Name:** `relay`. **URL:** `https://<ddns-name>/mcp` (the MCP endpoint itself,
-   the final non-redirecting URL — not a `.well-known` URL).
+2. **Name:** `relay`. **URL:** `https://<ddns-name>/mcp`, the MCP endpoint itself
+   and the final URL after any redirect.
 3. **Advanced settings:** **Client ID** = your `RELAY_OAUTH_CLIENT_ID`,
    **Client Secret** = your `RELAY_OAUTH_CLIENT_SECRET`. Add.
 4. Complete the OAuth consent: a browser prompt (HTTP Basic) appears — enter **any
@@ -121,17 +119,20 @@ IPv4 (no CGNAT) and your own cert.
 
 Open the Claude app → in a chat tap **+ → Connectors → toggle `relay` on**. Ask
 Claude to use the relay tools (`local_agent_run`, `local_agent_chat`,
-`relay.status`, …). Writes are **off** unless you start the server with
-`RELAY_ALLOW_WRITE=1` in its environment; a run then gets writes only when it
-asks with `allow_write: true`, and a call can never turn on what the launch did
-not. Remote exec is **off** unless the environment also has both
-`RELAY_ALLOW_EXEC=1` and `RELAY_ALLOW_REMOTE_EXEC=1`; `RELAY_ALLOW_EXEC` alone
-grants the phone nothing. Runs stay inside `RELAY_MCP_ROOT`, which defaults to
-the directory the server starts in (the repo root, for the launch scripts).
+`relay.status`, …). Writes and remote exec start **off**:
 
-These grant lines are **not** read from `.env`: a run allowed to write could
-otherwise edit `.env` and give itself exec on the next restart, which the launch
-scripts perform automatically. Set them in the shell that runs the script, for
+| To let the phone | Set in the server's environment | And the call sends |
+|---|---|---|
+| write files | `RELAY_ALLOW_WRITE=1` | `allow_write: true` |
+| run shell commands | `RELAY_ALLOW_EXEC=1` and `RELAY_ALLOW_REMOTE_EXEC=1` | |
+
+The launch sets the ceiling: a call asks within the grants the server started with. Runs stay inside
+`RELAY_MCP_ROOT`, which defaults to the directory the server starts in (the repo
+root, for the launch scripts).
+
+Set these grant lines in the shell that runs the script. relay reads them from
+the process environment and skips them in `.env`, because a run allowed to write
+could edit `.env` and grant itself exec at the next automatic restart. For
 example:
 
 ```powershell
@@ -139,12 +140,12 @@ $env:RELAY_ALLOW_WRITE = "1"; $env:RELAY_MCP_ROOT = "C:\work\project"
 powershell -ExecutionPolicy Bypass -File scripts\serve_remote.ps1
 ```
 
-The server names any grant line it finds in `.env` at startup and in
-`relay.doctor` (`env_file_ignored`). Point `RELAY_MCP_ROOT` at the workspace
-the phone should edit, not at relay's own checkout: a written file can run
-later as code there. relay's shell is not path-confined: it starts in the run's
-root and can reach any path your account can, so enable remote exec only
-deliberately.
+The server lists any grant line it finds in `.env` at startup and in
+`relay.doctor` (`env_file_ignored`). Point `RELAY_MCP_ROOT` at the workspace the
+phone should edit. relay's own checkout is a poor root, because a file written
+there can later run as relay's code. The shell starts in the run's root and can
+reach every path your account can, so turn on remote exec for a session you mean
+to give that reach.
 
 ---
 
@@ -165,12 +166,12 @@ already lists both.
 
 - **Sessions refresh automatically** (OAuth refresh tokens, 30-day, rotated on
   use), so a phone session survives past the 1-hour access-token lifetime.
-- **Cert renewal needs a process restart** — only on the direct path; the
-  launcher's restart loop handles it. The Cloudflare Tunnel path has no cert of
-  yours to renew.
-- **CGNAT** only blocks the direct port-forward path. The **Cloudflare Tunnel** path
-  is outbound-only, so it works behind CGNAT with no public IP — use it if your ISP
-  carrier-grade-NATs you.
+- **Cert renewal (direct path):** relay picks up a renewed cert on restart, and
+  the launcher's restart loop does that for you. On the Cloudflare Tunnel path,
+  Cloudflare renews its own cert.
+- **CGNAT:** the direct port-forward path needs a public IPv4. If your ISP puts
+  you behind carrier-grade NAT, use the **Cloudflare Tunnel** path, which dials
+  out and works from any connection.
 - **Background runs for a flaky link:** for a long task, prefer `local_agent_start`
   (returns a run_id at once) then poll `local_agent_status` / `local_agent_result`,
   rather than a single blocking `local_agent_run` that a mobile network may drop.
