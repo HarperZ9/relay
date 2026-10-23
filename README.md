@@ -5,7 +5,17 @@
 
 # relay
 
-Accountable coding agent that runs on any model endpoint.
+Relay is a command-line coding agent that runs on the model you pick. That can
+be a local model through Ollama, your Claude or Codex subscription CLI, or a
+provider API key. Relay tries them in a fixed order and moves to the next one
+when a model errors or runs out of quota. Each run is saved as a hash-chained
+log that you can replay, view and check offline later. Pass `--check "pytest -q"`
+and the run counts as done only when your own test command passes.
+
+It suits developers who want an agent that keeps working offline on local
+models, who want to see exactly what an agent changed and re-check it later, or
+who want to run an agent in CI and fail the job when the tests fail. It needs
+Python 3.11 or newer and has no runtime dependencies.
 
 ```
 python -m pip install flywheel-relay
@@ -16,29 +26,97 @@ python -m pip install flywheel-relay
 [![license](https://img.shields.io/badge/license-FSL--1.1--MIT-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/relay/blob/main/LICENSE)
 ![python 3.11+](https://img.shields.io/badge/python-3.11%2B-e6e1d6?style=flat-square&labelColor=1a1712)
 
-Local models when you're offline, your subscription or API when you need more,
-automatic failover across all of them, and every run is a re-verifiable,
-git-anchored trajectory. Stdlib only.
-
-```
-python -m pip install flywheel-relay
-
-relay --health --online                    # which model tiers are live?
-relay "explain this function" --file app.py
-relay --agent "fix the off-by-one in paginate()" --root . --allow-write --auto-commit
-relay --mcp                                # serve the agent to any MCP client (read-only)
-relay --mcp --allow-write                  # ...and let its runs write under the launch root
-```
-
 Relay publishes to PyPI as `flywheel-relay`, with PEP 740 attestations recording
-which workflow built the bytes. The bare name `relay-agent` belongs to an
-unrelated project and is not this distribution.
+which workflow built the bytes. The installed command is `relay`. The bare name
+`relay-agent` belongs to an unrelated project, and so does `relay`, so install
+`flywheel-relay`.
 
 If you would rather verify the bytes yourself than trust the index, the
 hash-verified path still works and is still supported: a pinned HarperZ9 GitHub
 commit or a GitHub Release wheel, where a missing checksum entry or a hash
 mismatch stops before `pip install`. See
 [`docs/GITHUB-ONLY-INSTALL.md`](docs/GITHUB-ONLY-INSTALL.md).
+
+## Quickstart
+
+Run on Windows 11 with Python 3.12, `flywheel-relay` 0.7.0 from PyPI in a fresh
+virtual environment, and Ollama running locally. The outputs below are trimmed
+copies of what those commands printed.
+
+1. **Check the tool permissions, no model needed.** The probe feeds six
+   prompt-injection scenarios through the agent's tool layer, assuming the model
+   was fooled, and reports how many were blocked. Exit code 0 means all of them.
+
+   ```text
+   $ relay --probe-injection
+     "contained": 6,
+     "total": 6,
+   ```
+
+2. **See which local models answer.** Without `--online`, relay only looks on
+   this machine: a local server at `127.0.0.1:8765`, then Ollama.
+
+   ```text
+   $ relay --health
+     "any_live": true,
+         "backend": "serve",
+         "healthy": false,
+         "backend": "ollama",
+         "healthy": true,
+         "detail": "flywheel-local-coder-32b:latest"
+   ```
+
+3. **Fix a bug, accepted only if the test passes.** A `pager.py` with an
+   off-by-one slice and a `test_pager.py` that asserts on it, in a git repo:
+
+   ```text
+   $ relay --agent "fix the off-by-one in paginate() in pager.py" --root . --allow-write \
+           --check "python test_pager.py" --model qwen3-coder:30b --save run.jsonl --cert run.rvc
+   [agent | 3 step(s) | 13 ledger entries | verified=True | accepted=True | check=pass | ...]
+
+   $ git diff
+   -    end = start + size - 1
+   +    end = start + size
+   ```
+
+   With `qwen3-coder:30b` on a 24 GB GPU this took about five minutes. The same
+   task on `qwen3:8b` stopped after a cut-off tool call: the check failed,
+   relay printed `accepted=False` and exited 1, and nothing was committed.
+   Small local models drive the tool loop unreliably, so expect retries or use
+   a larger model.
+
+4. **Check the saved run later.** The certificate verifies offline with no model
+   and no re-run. Changing one byte in the saved log breaks the chain.
+
+   ```text
+   $ relay --verify-cert run.rvc
+   ALLOW  run accepted: chain intact, receipts re-derive, contract satisfied
+
+   $ relay --view tampered.jsonl --no-color
+   REFUTED  hash chain broken at seq 0 (entry_hash does not re-derive from its fields)
+   ```
+
+To use hosted models, add `--online`. Relay then adds the Claude and Codex CLIs
+if they are installed and logged in, and any provider whose API key is set in
+the environment (see the table below). The quickstart above did not exercise
+those tiers.
+
+## How it compares
+
+- **Aider** is the closest match: a terminal pair programmer with a repo map,
+  git auto-commit and support for many models. It has more edit formats, more
+  model integrations and a much larger user base. Relay adds ordered failover
+  across local, subscription and API backends in one run, a saved run log that
+  verifies offline, and acceptance tied to a check command you supply.
+- **Claude Code** and **Codex CLI** are the vendors' own agents, with richer
+  tools and interfaces, each tied to its provider. Relay can call either one as
+  a backend tier and fall back to a local model when the quota runs out.
+- **OpenHands** runs agents inside a Docker sandbox with a web interface. Relay
+  has no container sandbox: its file tools stay inside `--root`, but the shell
+  tool, when you enable it with `--allow-exec`, can reach any path your user can.
+- **LiteLLM** and similar routers give you failover between model APIs without
+  an agent loop. Relay builds failover and the agent into one zero-dependency
+  command.
 
 ## See it work, step by step
 
@@ -52,52 +130,14 @@ source is [docs/explainer/index.html](docs/explainer/index.html).
 
 **[Models do what training pays for](https://harperz9.github.io/explainers.html#incentives-h)** (2 min, narrated, captioned). Relay accepts a run only when your own check passes, which is the guard this film argues for. The film page carries the transcript, the sources and recall questions.
 
-## Walkthrough
+## More commands
 
-Install it, run it once, then use the main feature. Each command below is real, and so is its output.
-
-1. **Install.** Install from PyPI. Python 3.11 or newer.
-
-   ```text
-   $ python -m pip install flywheel-relay
-   ```
-
-2. **First run: probe the boundary.** Before relay touches a model, run its built-in injection probes against the permission boundary. All six were contained.
-
-   ```text
-   $ relay --probe-injection
-     "contained": 6,
-     "total": 6,
-     "receipt": "1405769b874ca5d7"
-   ```
-
-3. **Read with line anchors.** The agent reads a file with a short hash on each line, so a later edit can name exactly the line it saw.
-
-   ```text
-   read_file {"path": "pager.py", "hashed": true}
-   b76150a4|def paginate(items, page, size):
-   ba6dfa08|    start = page * size
-   6627593c|    end = start + size - 1
-   a5dfd4fd|    return items[start:end]
-   ```
-
-4. **Edit by anchor.** An edit names the anchor it read. If the file changed since, the anchor no longer matches and the edit is refused.
-
-   ```text
-   edit_lines {"path": "pager.py", "at": "6627593c", "new": "    end = start + size"}
-   edited pager.py (replace 6627593c)
-
-   def paginate(items, page, size):
-       start = page * size
-       end = start + size
-       return items[start:end]
-   ```
-
-5. **Run a task, accepted only by your check.** Point relay at a model and a repository. Writes need `--allow-write`, and the run counts as done only when your check passes.
-
-   ```text
-   $ relay --agent "fix the off-by-one in paginate()" --root . --allow-write --check "pytest -q"
-   ```
+```
+relay "explain this function" --file app.py
+relay --agent "fix the off-by-one in paginate()" --root . --allow-write --auto-commit
+relay --mcp                                # serve the agent to any MCP client (read-only)
+relay --mcp --allow-write                  # ...and let its runs write under the launch root
+```
 
 ## Reaches every endpoint (with your own credentials)
 
@@ -108,7 +148,7 @@ tiers first so you only spend metered tokens when you have to:
 
 | Tier | Reached by |
 |---|---|
-| **local** | a served 14B/32B (`serve.py`) → Ollama (largest pulled model) |
+| **local** | a local server on `127.0.0.1:8765` with a `/generate` endpoint (`--serve-url`), then Ollama (the largest pulled model, or `--model`) |
 | **plan / max** | the official CLI (`claude`, `codex`) using your subscription auth, started isolated from your project |
 | **api** | `codex` / `claude` / `glm` / `gemini` / `deepseek` public APIs + `<PROVIDER>_API_KEY` |
 | **provider** | a gateway (OpenRouter, ...) via `<PROVIDER>_PROVIDER_BASE_URL` |
@@ -129,7 +169,7 @@ stays where it is. A rung whose credential is absent is never added to the ladde
 in the first place, so a missing key is a shorter ladder rather than an error at
 call time.
 
-## An actual coding agent, not a chat box
+## Agent tools
 
 `--agent` runs a permission-checked tool loop the model drives:
 
@@ -233,7 +273,7 @@ limited to plain single-run `--agent`; Relay refuses `--architect` with
 non-agent modes, watch/MCP/probe/view/verify/bisect/health commands, and
 `--best-of` until those paths have explicit planner semantics.
 
-## The wedge: a provable run
+## A run log you can check
 
 <p align="center"><img src="docs/art/accountability-lane.svg" alt="Eight stages from goal to certificate, ending in allow, refuted, or unverifiable." width="100%"></p>
 
@@ -244,10 +284,9 @@ only the files the ledger recorded as edits and carries the checkpoint in the
 message, so the commit binds the witnessed edit set; unrelated or shell-written
 working-tree changes are left out, never attributed to the run. Each model turn
 also carries a content-addressed receipt whose id a stranger can re-derive from
-the saved record. No other coding agent gives you a run you can *prove*, not just
-read.
+the saved record.
 
-## Prove it works, not just that it ran
+## Accept a run only when your check passes
 
 A witnessed trajectory proves *what* the agent did. It does not prove the edits are
 *correct*: a model can finish confidently and leave a broken tree. Pass `--check`
@@ -265,6 +304,12 @@ accepted, `--auto-commit` is skipped (a broken tree is never committed on your
 behalf), and the exit code is non-zero, so `--agent --check` works as a CI check over the
 agent's own work. `accepted` = a provable trajectory whose acceptance check held.
 
+`--test-cmd "pytest -q"` is the retrying form: on a failure the output goes back
+to the model and it keeps working until the command passes or `--max-steps` runs
+out. It needs `--allow-exec`. `--review` adds a second model pass that sees only
+the diff and none of the author's log. It returns APPROVE or REQUEST_CHANGES,
+or UNCLEAR when the reply does not start with either.
+
 And the pass has to be *earned*. A rule-based reward-hacking guard reads the
 witnessed edit set: if the agent made the check green by editing the test that grades
 it, or by injecting a `pytest.skip` / `sys.exit`, the pass is flagged UNTRUSTED and
@@ -272,7 +317,7 @@ the run is not accepted. A gamed green is never committed. The flags ship with t
 run under their own hash, re-checkable; the guard is non-learned and only ever turns
 an accept into a refusal, never the reverse.
 
-## Prove the boundary holds (prompt-injection robustness)
+## Prompt-injection probe
 
 Third-party data an agent reads (a file, a webpage, a tool result) can carry an
 instruction that tries to make it exfiltrate, overwrite, or escape. relay's defense
@@ -304,7 +349,7 @@ a high-tier edit **demands** a stronger receipt. These are facts, never generate
 prose, so a surface can enforce them. Expert reviewers get the middle of the run, not
 just its ending.
 
-## The proof toolkit: five ways to check a run
+## Five ways to check a saved run
 
 The witnessed ledger is the substrate for five checks a stranger can run offline.
 The full capability matrix and the honest nulls are in
